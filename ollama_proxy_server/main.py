@@ -10,8 +10,9 @@ from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 import re
 
-import requests
 import logging
+import requests
+
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
