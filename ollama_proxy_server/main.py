@@ -3,21 +3,25 @@ import configparser
 import csv
 import datetime
 import json
-import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from queue import Queue
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
+import re
 
 import requests
+import logging
+logging.getLogger("urllib3").setLevel(logging.CRITICAL)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def get_config(filename, default_timeout=300):
     config = configparser.ConfigParser()
     config.read(filename)
     servers = []
-    for name in config.sections():
+    for name in config.sections():  
         try:
             timeout = int(config[name].get('timeout', default_timeout))
             if timeout <= 0:
@@ -123,6 +127,7 @@ def main():
                     return False
                 token = auth_header.split(' ')[1]
                 user, key = token.split(':')
+                print(user, key)
 
                 # Check if the user and key are in the list of authorized users
                 if self.authorized_users.get(user) == key:
@@ -135,9 +140,10 @@ def main():
                 return False
 
         def is_server_available(self, server_info):
+            self.timeout=20
             try:
                 # Attempt to send a HEAD request to the server's URL with a short timeout
-                response = requests.head(server_info['url'], timeout=2)
+                response = requests.head(server_info['url'], timeout=self.timeout)
                 return response.status_code == 200
             except:
                 return False
@@ -177,7 +183,7 @@ def main():
                     token = auth_header.split(' ')[1]
                     self.add_access_log_entry(event='rejected', user=token, ip_address=client_ip, access="Denied", server="None", nb_queued_requests_on_server=-1, error="Authentication failed")
                 self.send_response(403)
-                self.end_headers()
+                self.end_headers()  
                 return
             url = urlparse(self.path)
             path = url.path
@@ -219,9 +225,9 @@ def main():
             print(f"Extracted model: {model}")
 
             # Endpoints that require model-based routing
-            model_based_endpoints = ['/api/generate', '/api/chat', '/generate', '/chat']
-
-            if path in model_based_endpoints:
+            model_based_endpoints = ['/api/generate', '/api/chat', '/api/chat/completions', '/generate', '/chat']
+            stripped_path = re.sub('/$', '', path)
+            if stripped_path in model_based_endpoints:
                 if not model:
                     # Model is required for these endpoints
                     self.send_response(400)
@@ -229,7 +235,7 @@ def main():
                     self.wfile.write(b"Missing 'model' in request")
                     print("Missing 'model' in request")
                     return
-
+                
                 # Filter servers that support the requested model
                 available_servers = [server for server in self.servers if model in server[1]['models']]
 
@@ -245,9 +251,11 @@ def main():
 
                 # Try to find an available server
                 response = None
+
                 while available_servers:
                     # Find the server with the lowest queue size among available_servers
                     min_queued_server = min(available_servers, key=lambda s: s[1]['queue'].qsize())
+                    
                     if not self.is_server_available(min_queued_server[1]):
                         print(f"Server {min_queued_server[0]} is not available.")
                         available_servers.remove(min_queued_server)
@@ -268,6 +276,7 @@ def main():
                         response = self.send_request_with_retries(min_queued_server[1], path, get_params, post_data_dict, backend_headers)
                         if response:
                             self._send_response(response)
+                            print(f"COST_USER:{self.user} Input:{json.loads(response.content.split()[-1])['prompt_eval_count']} OUTPUT:{json.loads(response.content.split()[-1])['eval_count']}")
                             break  # Success
                         else:
                             # All retries failed, try next server
@@ -284,7 +293,55 @@ def main():
                     self.send_response(503)
                     self.end_headers()
                     self.wfile.write(b"No available servers could handle the request.")
+            elif stripped_path in ['/api/tags']:
+                logger.debug(f"List supported models")
+                models = [model for server in self.servers for model in server[1]['models']]
+                model_info = []
+                server_tags = {}
+                for server in self.servers:
+                    response = self.send_request_with_retries(server[1], path, get_params, post_data_dict, backend_headers)
+                    
+                    if response:
+                        logger.debug(f'Received response from server {server[0]}')
+                    else:
+                        logger.debug(f'Received response from server {server[0]}')
+                        self.wfile.write(b"Failed to forward request to {}.".format(server[0]))
+                        
+                    server_tags[server[0]] = {model['name']:model for model in json.loads(response.content)['models']}
+                for model in models:
+                    available_servers = [server for server in self.servers if model in server[1]['models']]
+                    print(f"Available servers for model '{model}': {[s[0] for s in available_servers]}")
+                    for server in available_servers:
+                        try:
+                            model_info.append(server_tags[server[0]][model])
+                        except:
+                            logger.warning(f"Model {model} not found in server {server[0]}")
+                model_info = {"models": model_info}
+                self.send_response(200) 
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(model_info).encode('utf-8'))
+            elif stripped_path in ['/api/ps']:
+                logger.debug(f"ps servers")
+                server_ps = {}
+                for server in self.servers:
+                    response = self.send_request_with_retries(server[1], path, get_params, post_data_dict, backend_headers)
+                    
+                    if response:
+                        logger.debug(f'Received response from server {server[0]}')
+                    else:
+                        logger.debug(f'Received response from server {server[0]}')
+                        self.wfile.write(b"Failed to forward request to {}.".format(server[0]))
+                    
+                    server_ps[server[0]] = json.loads(response.content)
+                    
+                self.send_response(200) 
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(server_ps).encode('utf-8'))
             else:
+                logger.warning(f"Not recognized path, running : {stripped_path}")
+                ## TODO Approve endpoints
                 # For other endpoints, mirror the request to the default server with retries
                 default_server = self.servers[0]
                 if not self.is_server_available(default_server[1]):

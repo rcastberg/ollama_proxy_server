@@ -1,0 +1,5 @@
+time_stamp,event,user_name,ip_address,access,server,nb_queued_requests_on_server,error
+2024-10-29 08:21:20.202044,rejected,eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZjMzNlYmVlLTk4NmQtNDhhNy1hYzhlLWJiYzRjYjJlMDU1YyJ9.YAw31m5YtsUbbtDx3wOZ4NeB8zMSFpggSpffpthmrE4,127.0.0.1,Denied,None,-1,Authentication failed
+2024-10-29 08:21:43.165065,rejected,7e2879351deb14a63ace00c4,127.0.0.1,Denied,None,-1,Authentication failed
+2024-10-29 08:23:42.442536,rejected,7e2879351deb14a63ace00c4,127.0.0.1,Denied,None,-1,Authentication failed
+2024-10-29 08:24:21.406281,rejected,7e2879351deb14a63ace00c4,127.0.0.1,Denied,None,-1,Authentication failed

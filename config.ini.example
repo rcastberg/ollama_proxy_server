@@ -1,0 +1,14 @@
+[DefaultServer]
+url = http://192.168.0.1:11434
+queue_size = 5
+models = tinyllama:latest,gemma2:2b,phi3:latest
+
+#[SecondaryServer]
+#url = http://192.168.0.149:11434
+#queue_size = 5
+#models = llama3.1:70b
+
+#[ThirdServer]
+#url = http://192.168.0.14:11434
+#queue_size = 5
+#models = llama3.1:70b
