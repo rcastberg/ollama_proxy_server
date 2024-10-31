@@ -353,19 +353,22 @@ def main():
                                 try:
                                     info = json.loads(last_chunk.split(b'\n')[-2])
                                 except IndexError:
-                                    info = json.loads(response.content)
+                                    try:
+                                        info = json.loads(response.content)
+                                    except json.decoder.JSONDecodeError:
+                                        # Fall back method, return number of words:
+                                        # Should eventually be fixed by : https://github.com/ollama/ollama/pull/6784 
+                                        # See https://github.com/ollama/ollama/issues/4448
+                                        info = {'usage': {'prompt_tokens': 0, 'completion_tokens': 0}}
+                                        info['usage']["prompt_tokens"] = sum([len(i['content'].split()) for i in post_data_dict['messages']])
+                                        info['usage']["completion_tokens"] = count
                                 try:
                                     input_tokens = info['usage']["prompt_tokens"]
                                     output_tokens = info['usage']["completion_tokens"]
                                 except json.decoder.JSONDecodeError:
-                                    # Fall back method, return number of words:
-                                    try:
-                                        input_tokens = sum([len(i['content'].split()) for i in post_data_dict['messages']])
-                                        output_tokens = count
-                                    except Exception as e:
-                                        print(f"Failed to parse response: {response.content}")
-                                        print(f"Response: {response}")
-                                        print(f"Exception: {e}")
+                                    print(f"Failed to parse response: {response.content}")
+                                    print(f"Response: {response}")
+                                    print(f"Exception: {e}")
                                 break
                             else:
                                 try:
