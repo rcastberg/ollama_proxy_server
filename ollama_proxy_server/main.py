@@ -9,6 +9,7 @@ from queue import Queue
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 import re
+import os
 
 import logging
 import requests
@@ -18,11 +19,14 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-def get_config(filename, default_timeout=300):
+def get_config(filename, config_string=None, default_timeout=300):
     config = configparser.ConfigParser()
-    config.read(filename)
+    if config_string is None or config_string == "":
+        config.read(filename)
+    else:
+        config.read_string(config_string)
     servers = []
-    for name in config.sections():  
+    for name in config.sections():
         try:
             timeout = int(config[name].get('timeout', default_timeout))
             if timeout <= 0:
@@ -39,13 +43,19 @@ def get_config(filename, default_timeout=300):
             'timeout': timeout
         }
         servers.append((name, server_info))
-    print(f"Loaded servers from {filename}: {servers}")
+    if config_string is None:
+        print(f"Loaded servers from {filename}: {servers}")
+    else:
+        print("Loaded servers from env config string")
     return servers
 
 
-def get_authorized_users(filename):
-    with open(filename, 'r') as f:
-        lines = f.readlines()
+def get_authorized_users(filename, users_env=None):
+    if users_env:
+        lines = users_env.replace(";", '\n').split('\n')
+    else:
+        with open(filename, 'r', encoding='utf8') as f:
+            lines = f.readlines()
     authorized_users = {}
     for line in lines:
         if line.strip() == "":
@@ -53,10 +63,21 @@ def get_authorized_users(filename):
         try:
             user, key = line.strip().split(':')
             authorized_users[user] = key
-        except:
+        except Exception as e:
+            logger.degug("User entry broken, Exception: %s", e)
             print(f"User entry broken: {line.strip()}")
     print(f"Loaded authorized users from {filename}: {list(authorized_users.keys())}")
     return authorized_users
+
+
+def check_sys_env(name, default=None):
+    if name in os.environ:
+        logger.debug("Using environment variable %s", name)
+        return os.environ[name]
+    else:
+        if default is not None:
+            return default
+        return None
 
 
 def main():
@@ -74,27 +95,43 @@ def main():
 
     class RequestHandler(BaseHTTPRequestHandler):
         # Class variables to access arguments and servers
-        retry_attempts = args.retry_attempts
-        servers = get_config(args.config)
-        authorized_users = get_authorized_users(args.users_list)
-        deactivate_security = args.deactivate_security
-        log_path = args.log_path
+        retry_attempts = check_sys_env("OP_RETRY_ATTEMPTS", default=args.retry_attempts)  # Sys env has priority
+        servers = get_config(args.config, config_string=check_sys_env('OP_SERVERS', '').replace(";", '\n'))
+        authorized_users = get_authorized_users(args.users_list, check_sys_env('OP_AUTHORIZED_USERS'))
+        deactivate_security = check_sys_env('OP_DEACTIVATE_SECURITY', default=args.deactivate_security)
+        log_path = check_sys_env('OP_LOG_PATH', default=args.log_path)
 
-        def add_access_log_entry(self, event, user, ip_address, access, server, nb_queued_requests_on_server, error=""):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.user = None
+
+        def add_access_log_entry(self, event, user, ip_address, access, server, nb_queued_requests_on_server, error="",
+                                 input_tokens=0, output_tokens=0):
             log_file_path = Path(self.log_path)
-
+            logger.debug('Adding log entry')
             if not log_file_path.exists():
-                with open(log_file_path, mode='w', newline='') as csvfile:
-                    fieldnames = ['time_stamp', 'event', 'user_name', 'ip_address', 'access', 'server', 'nb_queued_requests_on_server', 'error']
+                with open(log_file_path, mode='w', newline='', encoding='utf8') as csvfile:
+                    fieldnames = ['time_stamp', 'event', 'user_name', 'ip_address', 'access', 'server',
+                                  'nb_queued_requests_on_server', 'input_tokens', 'output_tokens', 'error']
                     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                     writer.writeheader()
 
-            with open(log_file_path, mode='a', newline='') as csvfile:
-                fieldnames = ['time_stamp', 'event', 'user_name', 'ip_address', 'access', 'server', 'nb_queued_requests_on_server', 'error']
+            with open(log_file_path, mode='a', newline='', encoding='utf8') as csvfile:
+                fieldnames = ['time_stamp', 'event', 'user_name', 'ip_address', 'access', 'server',
+                              'nb_queued_requests_on_server', 'input_tokens', 'output_tokens', 'error']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                row = {'time_stamp': str(datetime.datetime.now()), 'event': event, 'user_name': user, 'ip_address': ip_address, 'access': access, 'server': server, 'nb_queued_requests_on_server': nb_queued_requests_on_server, 'error': error}
+                row = {'time_stamp': str(datetime.datetime.now()), 'event': event, 'user_name': user,
+                       'ip_address': ip_address, 'access': access, 'server': server,
+                       'nb_queued_requests_on_server': nb_queued_requests_on_server,
+                       'input_tokens': input_tokens, 'output_tokens': output_tokens, 'error': error}
+                logger.debug('Log: %s', str(row))
                 writer.writerow(row)
-
+                
+        def ring_buffer(self, data, new_data):
+            data.pop(0)
+            data.append(new_data)
+            return data
+            
         def _send_response(self, response):
             self.send_response(response.status_code)
             for key, value in response.headers.items():
@@ -103,15 +140,25 @@ def main():
             self.send_header('Transfer-Encoding', 'chunked')
             self.end_headers()
 
+            chunks = [b'', b'', b'']
+            eval_data = None
             try:
                 for chunk in response.iter_content(chunk_size=1024):
                     if chunk:
                         self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
                         self.wfile.flush()
+                        chunks = self.ring_buffer(chunks, chunk)
+                        if b'eval_count' in chunks[1]:
+                            eval_data = chunks
+                if not eval_data:
+                    eval_data = chunks
                 self.wfile.write(b"0\r\n\r\n")
             except BrokenPipeError:
                 pass
-
+            except Exception as e:
+                logging.error(f"An unexpected error occurred: {e}")
+            return b''.join(eval_data)
+        
         def do_GET(self):
             self.log_request()
             self.proxy()
@@ -137,16 +184,18 @@ def main():
                 else:
                     self.user = "unknown"
                 return False
-            except:
+            except Exception as e:
+                logger.debug("User parse, Exception: %s", e)
                 return False
 
         def is_server_available(self, server_info):
-            self.timeout=20
+            self.timeout = 20
             try:
                 # Attempt to send a HEAD request to the server's URL with a short timeout
                 response = requests.head(server_info['url'], timeout=self.timeout)
                 return response.status_code == 200
-            except:
+            except Exception as e:
+                logger.debug("Server not available, Exception %s", e)
                 return False
 
         def send_request_with_retries(self, server_info, path, get_params, post_data_dict, backend_headers):
@@ -173,21 +222,31 @@ def main():
 
         def proxy(self):
             self.user = "unknown"
+            url = urlparse(self.path)
+            path = url.path
+            if path == '/':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html')
+                self.end_headers()
+                self.wfile.write(b"Ollama is running")
+                return
             if not self.deactivate_security and not self._validate_user_and_key():
                 print('User is not authorized')
                 client_ip, client_port = self.client_address
                 # Extract the bearer token from the headers
                 auth_header = self.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
-                    self.add_access_log_entry(event='rejected', user="unknown", ip_address=client_ip, access="Denied", server="None", nb_queued_requests_on_server=-1, error="Authentication failed")
+                    self.add_access_log_entry(event='rejected', user="unknown", ip_address=client_ip, access="Denied",
+                                              server="None", nb_queued_requests_on_server=-1,
+                                              error="Authentication failed")
                 else:
                     token = auth_header.split(' ')[1]
-                    self.add_access_log_entry(event='rejected', user=token, ip_address=client_ip, access="Denied", server="None", nb_queued_requests_on_server=-1, error="Authentication failed")
+                    self.add_access_log_entry(event='rejected', user=token, ip_address=client_ip, access="Denied",
+                                              server="None", nb_queued_requests_on_server=-1,
+                                              error="Authentication failed")
                 self.send_response(403)
-                self.end_headers()  
+                self.end_headers()
                 return
-            url = urlparse(self.path)
-            path = url.path
             get_params = parse_qs(url.query) or {}
 
             client_ip, client_port = self.client_address
@@ -196,6 +255,7 @@ def main():
             backend_headers = dict(self.headers)
             # Remove 'Authorization' header
             backend_headers.pop('Authorization', None)
+            backend_headers.pop('Host', None)
 
             # Log the incoming request
             print(f"Incoming request from {client_ip}:{client_port}")
@@ -226,7 +286,8 @@ def main():
             print(f"Extracted model: {model}")
 
             # Endpoints that require model-based routing
-            model_based_endpoints = ['/api/generate', '/api/chat', '/api/chat/completions', '/generate', '/chat']
+            model_based_endpoints = ['/api/generate', '/api/chat', '/api/chat/completions', '/generate', '/chat',
+                                     '/v1/chat/completions']
             stripped_path = re.sub('/$', '', path)
             if stripped_path in model_based_endpoints:
                 if not model:
@@ -236,7 +297,7 @@ def main():
                     self.wfile.write(b"Missing 'model' in request")
                     print("Missing 'model' in request")
                     return
-                
+
                 # Filter servers that support the requested model
                 available_servers = [server for server in self.servers if model in server[1]['models']]
 
@@ -256,7 +317,7 @@ def main():
                 while available_servers:
                     # Find the server with the lowest queue size among available_servers
                     min_queued_server = min(available_servers, key=lambda s: s[1]['queue'].qsize())
-                    
+
                     if not self.is_server_available(min_queued_server[1]):
                         print(f"Server {min_queued_server[0]} is not available.")
                         available_servers.remove(min_queued_server)
@@ -264,21 +325,52 @@ def main():
                     que = min_queued_server[1]['queue']
                     try:
                         que.put_nowait(1)
-                        self.add_access_log_entry(event="gen_request", user=self.user, ip_address=client_ip, access="Authorized", server=min_queued_server[0], nb_queued_requests_on_server=que.qsize())
-                    except:
-                        self.add_access_log_entry(event="gen_error", user=self.user, ip_address=client_ip, access="Authorized", server=min_queued_server[0], nb_queued_requests_on_server=que.qsize(), error="Queue is full")
+                        self.add_access_log_entry(event="gen_request", user=self.user, ip_address=client_ip,
+                                                  access="Authorized", server=min_queued_server[0],
+                                                  nb_queued_requests_on_server=que.qsize())
+                    except Exception as e:
+                        logger.debug("Failed to put request in queue: %s", e)
+                        self.add_access_log_entry(event="gen_error", user=self.user, ip_address=client_ip,
+                                                  access="Authorized", server=min_queued_server[0],
+                                                  nb_queued_requests_on_server=que.qsize(), error="Queue is full")
                         self.send_response(503)
                         self.end_headers()
                         self.wfile.write(b"Server is busy. Please try again later.")
                         return
-
+                    # Prepare to store input and output tokens
+                    input_tokens = 0
+                    output_tokens = 0
                     try:
                         # Send request with retries
-                        response = self.send_request_with_retries(min_queued_server[1], path, get_params, post_data_dict, backend_headers)
+                        response = self.send_request_with_retries(min_queued_server[1], path, get_params,
+                                                                  post_data_dict, backend_headers)
                         if response:
-                            self._send_response(response)
-                            print(f"COST_USER:{self.user} Input:{json.loads(response.content.split()[-1])['prompt_eval_count']} OUTPUT:{json.loads(response.content.split()[-1])['eval_count']}")
-                            break  # Success
+                            last_chunk = self._send_response(response)
+                            if '/v1/' in stripped_path:  # ChatGPT
+                                # add stuff
+                                try:
+                                    input_tokens = json.loads(response.content)['usage']["prompt_tokens"]
+                                    output_tokens = json.loads(response.content)['usage']["completion_tokens"]
+                                except json.decoder.JSONDecodeError:
+                                    print(f"Failed to find tokens usage, response: {response.content}")
+                                    print(f"Response: {response}")
+                                break
+                            else:
+                                try:
+                                    info = json.loads(last_chunk.split(b'\n')[-2])
+                                except IndexError:
+                                    info = json.loads(response.content)
+                                try:
+                                    input_tokens = info['prompt_eval_count']
+                                    output_tokens = info['eval_count']
+                                except json.decoder.JSONDecodeError:
+                                    print(f"Failed to parse response: {response.content}")
+                                    print(f"Response: {response}")
+                                except Exception as e:
+                                    print(f"Failed to find tokens usage, response: {response.content}")
+                                    print(f"Response: {response}")
+                                    print(f"Exception: {e}")
+                                break
                         else:
                             # All retries failed, try next server
                             print(f"All retries failed for server {min_queued_server[0]}")
@@ -286,63 +378,102 @@ def main():
                     finally:
                         try:
                             que.get_nowait()
-                            self.add_access_log_entry(event="gen_done", user=self.user, ip_address=client_ip, access="Authorized", server=min_queued_server[0], nb_queued_requests_on_server=que.qsize())
-                        except:
-                            pass
+                            self.add_access_log_entry(event="gen_done", user=self.user, ip_address=client_ip,
+                                                      access="Authorized", server=min_queued_server[0],
+                                                      nb_queued_requests_on_server=que.qsize(),
+                                                      input_tokens=input_tokens, output_tokens=output_tokens)
+                        except Exception as e:
+                            logger.debug("Write to log, Exception: %s", e)
                 if not response:
                     # No server could handle the request
                     self.send_response(503)
                     self.end_headers()
                     self.wfile.write(b"No available servers could handle the request.")
             elif stripped_path in ['/api/tags']:
-                logger.debug(f"List supported models")
+                logger.debug("List supported models")
                 models = [model for server in self.servers for model in server[1]['models']]
                 model_info = []
                 server_tags = {}
                 for server in self.servers:
-                    response = self.send_request_with_retries(server[1], path, get_params, post_data_dict, backend_headers)
-                    
+                    response = self.send_request_with_retries(server[1], path, get_params, post_data_dict,
+                                                              backend_headers)
+
                     if response:
-                        logger.debug(f'Received response from server {server[0]}')
+                        logger.debug("Received response from server %s", server[0])
                     else:
-                        logger.debug(f'Received response from server {server[0]}')
-                        self.wfile.write(b"Failed to forward request to {}.".format(server[0]))
-                        
-                    server_tags[server[0]] = {model['name']:model for model in json.loads(response.content)['models']}
+                        logger.debug("Received response from server %s", server[0])
+                        self.wfile.write(bytes("Failed to forward request to {server[0]}."))
+
+                    server_tags[server[0]] = {model['name']: model for model in json.loads(response.content)['models']}
                 for model in models:
                     available_servers = [server for server in self.servers if model in server[1]['models']]
                     print(f"Available servers for model '{model}': {[s[0] for s in available_servers]}")
                     for server in available_servers:
                         try:
                             model_info.append(server_tags[server[0]][model])
-                        except:
-                            logger.warning(f"Model {model} not found in server {server[0]}")
+                        except Exception as e:
+                            logger.debug("Model not found, Exception: %s", e)
+                            logger.warning("Model %s not found in server %s", model, server[0])
                 model_info = {"models": model_info}
-                self.send_response(200) 
+                self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps(model_info).encode('utf-8'))
+            elif stripped_path in ['/v1/models']:
+                logger.debug("List supported models")
+                models = [model for server in self.servers for model in server[1]['models']]
+                model_info = []
+                server_tags = {}
+                for server in self.servers:
+                    response = self.send_request_with_retries(server[1], path, get_params, post_data_dict,
+                                                              backend_headers)
+
+                    if response:
+                        logger.debug('Received response from server %s', server[0])
+                    else:
+                        logger.debug('Received response from server %s', server[0])
+                        self.wfile.write(bytes(f"Failed to forward request to {server[0]}."))
+
+                    server_tags[server[0]] = {model['id']: model for model in json.loads(response.content)['data']}
+                for model in models:
+                    available_servers = [server for server in self.servers if model in server[1]['models']]
+                    print(f"Available servers for model '{model}': {[s[0] for s in available_servers]}")
+                    for server in available_servers:
+                        try:
+                            model_info.append(server_tags[server[0]][model])
+                        except Exception as e:
+                            logger.debug("Model not found, Exception: %s", e)
+                            logger.warning("Model %s not found in server %s", model, server[0])
+                model_info = {"object": "list", "data": model_info}
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(model_info).encode('utf-8'))
+            elif stripped_path in ['/api/pull', '/api/delete', '/api/push', '/api/copy', '/api/create']:
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b"Unsupported in proxy.")
             elif stripped_path in ['/api/ps']:
-                logger.debug(f"ps servers")
+                logger.debug("ps servers")
                 server_ps = {}
                 for server in self.servers:
-                    response = self.send_request_with_retries(server[1], path, get_params, post_data_dict, backend_headers)
-                    
+                    response = self.send_request_with_retries(server[1], path, get_params, post_data_dict,
+                                                              backend_headers)
+
                     if response:
-                        logger.debug(f'Received response from server {server[0]}')
+                        logger.debug('Received response from server %s', server[0])
                     else:
-                        logger.debug(f'Received response from server {server[0]}')
-                        self.wfile.write(b"Failed to forward request to {}.".format(server[0]))
-                    
+                        logger.debug('Received response from server %s', server[0])
+                        self.wfile.write(bytes(f"Failed to forward request to {server[0]}."))
+
                     server_ps[server[0]] = json.loads(response.content)
-                    
-                self.send_response(200) 
+
+                self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps(server_ps).encode('utf-8'))
             else:
-                logger.warning(f"Not recognized path, running : {stripped_path}")
-                ## TODO Approve endpoints
+                logger.warning("Not recognized path, running : %s", stripped_path)
                 # For other endpoints, mirror the request to the default server with retries
                 default_server = self.servers[0]
                 if not self.is_server_available(default_server[1]):
@@ -350,7 +481,8 @@ def main():
                     self.end_headers()
                     self.wfile.write(b"Default server is not available.")
                     return
-                response = self.send_request_with_retries(default_server[1], path, get_params, post_data_dict, backend_headers)
+                response = self.send_request_with_retries(default_server[1], path, get_params, post_data_dict,
+                                                          backend_headers)
                 if response:
                     self._send_response(response)
                 else:
@@ -362,8 +494,9 @@ def main():
         daemon_threads = True  # Gracefully handle shutdown
 
     print('Starting server')
-    server = ThreadedHTTPServer(('', args.port), RequestHandler)
-    print(f'Running server on port {args.port}')
+    port = int(check_sys_env('OP_PORT', args.port))
+    server = ThreadedHTTPServer(('', port), RequestHandler)
+    print(f'Running server on port {port}')
     try:
         server.serve_forever()
     except KeyboardInterrupt:
