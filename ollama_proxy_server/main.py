@@ -30,10 +30,10 @@ def get_config(filename, config_string=None, default_timeout=300):
         try:
             timeout = int(config[name].get('timeout', default_timeout))
             if timeout <= 0:
-                print(f"Invalid timeout value for server '{name}'. Using default {default_timeout} seconds.")
+                logger.info("Invalid timeout value for server '%s'. Using default %d seconds.", name, default_timeout)
                 timeout = default_timeout
         except ValueError:
-            print(f"Non-integer timeout value for server '{name}'. Using default {default_timeout} seconds.")
+            logger.info("Non-integer timeout value for server %s. Using default %d seconds.", name, default_timeout)
             timeout = default_timeout
 
         server_info = {
@@ -44,9 +44,9 @@ def get_config(filename, config_string=None, default_timeout=300):
         }
         servers.append((name, server_info))
     if config_string is None:
-        print(f"Loaded servers from {filename}: {servers}")
+        logger.debug("Loaded servers from %s: %s", filename, servers)
     else:
-        print("Loaded servers from env config string")
+        logger.debug("Loaded servers from env config string")
     return servers
 
 
@@ -65,8 +65,8 @@ def get_authorized_users(filename, users_env=None):
             authorized_users[user] = key
         except Exception as e:
             logger.degug("User entry broken, Exception: %s", e)
-            print(f"User entry broken: {line.strip()}")
-    print(f"Loaded authorized users from {filename}: {list(authorized_users.keys())}")
+            logger.info("User entry broken: %s", line.strip())
+    logger.debug("Loaded authorized users from %s: %s", filename, str(list(authorized_users.keys())))
     return authorized_users
 
 
@@ -90,8 +90,8 @@ def main():
     parser.add_argument('-d', '--deactivate_security', action='store_true', help='Deactivates security')
     args = parser.parse_args()
 
-    print("Ollama Proxy server")
-    print("Author: ParisNeo")
+    logger.info("Ollama Proxy server")
+    logger.info("Author: ParisNeo, rcastberg")
 
     class RequestHandler(BaseHTTPRequestHandler):
         # Class variables to access arguments and servers
@@ -100,6 +100,7 @@ def main():
         authorized_users = get_authorized_users(args.users_list, check_sys_env('OP_AUTHORIZED_USERS'))
         deactivate_security = check_sys_env('OP_DEACTIVATE_SECURITY', default=args.deactivate_security)
         log_path = check_sys_env('OP_LOG_PATH', default=args.log_path)
+        logger.debug(f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, deactivate_security={deactivate_security}, log_path={log_path}")
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -177,7 +178,7 @@ def main():
                     return False
                 token = auth_header.split(' ')[1]
                 user, key = token.split(':')
-                print(user, key)
+                logger.debug("%s %s", user, key)
 
                 # Check if the user and key are in the list of authorized users
                 if self.authorized_users.get(user) == key:
@@ -204,7 +205,7 @@ def main():
             for attempt in range(self.retry_attempts):
                 try:
                     # Send request to backend server with timeout
-                    print(f"Attempt {attempt + 1} forwarding request to {server_info['url'] + path}")
+                    logger.debug("Attempt %d forwarding request to %s", attempt + 1, server_info['url'] + path)
                     response = requests.request(
                         self.command,
                         server_info['url'] + path,
@@ -214,12 +215,12 @@ def main():
                         headers=backend_headers,
                         timeout=server_info['timeout']
                     )
-                    print(f"Received response with status code {response.status_code}")
+                    logger.debug("Received response with status code %d", response.status_code)
                     return response
                 except requests.Timeout:
-                    print(f"Timeout on attempt {attempt + 1} forwarding request to {server_info['url']}")
+                    logger.debug("Timeout on attempt %d forwarding request to %s", attempt + 1, server_info['url'])
                 except Exception as ex:
-                    print(f"Error on attempt {attempt + 1} forwarding request: {ex}")
+                    logger.debug("Error on attempt %d forwarding request: %s", attempt + 1, ex)
             return None  # If all attempts failed
 
         def proxy(self):
@@ -233,7 +234,7 @@ def main():
                 self.wfile.write(b"Ollama is running")
                 return
             if not self.deactivate_security and not self._validate_user_and_key():
-                print('User is not authorized')
+                logger.warning('User is not authorized')
                 client_ip, client_port = self.client_address
                 # Extract the bearer token from the headers
                 auth_header = self.headers.get('Authorization')
@@ -260,10 +261,10 @@ def main():
             backend_headers.pop('Host', None)
 
             # Log the incoming request
-            print(f"Incoming request from {client_ip}:{client_port}")
-            print(f"Request method: {self.command}")
-            print(f"Request path: {path}")
-            print(f"Query parameters: {get_params}")
+            logger.debug("Incoming request from %s:%s", client_ip, str(client_port))
+            logger.debug("Request method: %s", self.command)
+            logger.debug("Request path: %s", path)
+            logger.debug("Query parameters: %s", get_params)
 
             if self.command == "POST":
                 content_length = int(self.headers.get('Content-Length', 0))
@@ -272,9 +273,9 @@ def main():
                 try:
                     post_data_str = post_data.decode('utf-8')
                     post_data_dict = json.loads(post_data_str)
-                    print(f"POST data: {post_data_dict}")
+                    logger.debug("POST data: %s", post_data_dict)
                 except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                    print(f"Failed to decode POST data: {e}")
+                    logger.warning("Failed to decode POST data: %s", e)
                     post_data_dict = {}
             else:
                 post_data = None
@@ -285,7 +286,7 @@ def main():
             if not model:
                 model = get_params.get('model', [None])[0]
 
-            print(f"Extracted model: {model}")
+            logger.debug("Extracted model: %s", model)
 
             # Endpoints that require model-based routing
             model_based_endpoints = ['/api/generate', '/api/chat', '/api/chat/completions', '/generate', '/chat',
@@ -297,7 +298,7 @@ def main():
                     self.send_response(400)
                     self.end_headers()
                     self.wfile.write(b"Missing 'model' in request")
-                    print("Missing 'model' in request")
+                    logger.info("Missing 'model' in request")
                     return
 
                 # Filter servers that support the requested model
@@ -305,13 +306,13 @@ def main():
 
                 if not available_servers:
                     # No server supports the requested model
-                    print(f"No servers support model '{model}'.")
+                    logger.info("No servers support model '%s'", model)
                     self.send_response(503)
                     self.end_headers()
                     self.wfile.write(b"No servers support the requested model.")
                     return
                 else:
-                    print(f"Available servers for model '{model}': {[s[0] for s in available_servers]}")
+                    logger.debug("Available servers for model '%s': %s", model, str([s[0] for s in available_servers]))
 
                 # Try to find an available server
                 response = None
@@ -321,7 +322,7 @@ def main():
                     min_queued_server = min(available_servers, key=lambda s: s[1]['queue'].qsize())
 
                     if not self.is_server_available(min_queued_server[1]):
-                        print(f"Server {min_queued_server[0]} is not available.")
+                        logger.info("Server %s is not available.", min_queued_server[0])
                         available_servers.remove(min_queued_server)
                         continue
                     que = min_queued_server[1]['queue']
@@ -366,8 +367,8 @@ def main():
                                     input_tokens = info['usage']["prompt_tokens"]
                                     output_tokens = info['usage']["completion_tokens"]
                                 except json.decoder.JSONDecodeError:
-                                    print(f"Failed to parse response: {response.content}")
-                                    print(f"Response: {response}")
+                                    logger.info("Failed to parse response: %s", response.content)
+                                    logger.info("Response: %s", response)
                                 break
                             else:
                                 try:
@@ -378,16 +379,16 @@ def main():
                                     input_tokens = info['prompt_eval_count']
                                     output_tokens = info['eval_count']
                                 except json.decoder.JSONDecodeError:
-                                    print(f"Failed to parse response: {response.content}")
-                                    print(f"Response: {response}")
+                                    logger.debug("Failed to parse response: %s", response.content)
+                                    logger.debug("Response: %s", response)
                                 except Exception as e:
-                                    print(f"Failed to find tokens usage, response: {response.content}")
-                                    print(f"Response: {response}")
-                                    print(f"Exception: {e}")
+                                    logger.debug("Failed to find tokens usage, response: %s", response.content)
+                                    logger.debug("Response: %s", response)
+                                    logger.debug("Exception: %s", e)
                                 break
                         else:
                             # All retries failed, try next server
-                            print(f"All retries failed for server {min_queued_server[0]}")
+                            logger.warning("All retries failed for server %s", min_queued_server[0])
                             available_servers.remove(min_queued_server)
                     finally:
                         try:
@@ -421,7 +422,7 @@ def main():
                     server_tags[server[0]] = {model['name']: model for model in json.loads(response.content)['models']}
                 for model in models:
                     available_servers = [server for server in self.servers if model in server[1]['models']]
-                    print(f"Available servers for model '{model}': {[s[0] for s in available_servers]}")
+                    logger.debug("Available servers for model '%s': %s", model, str([s[0] for s in available_servers]))
                     for server in available_servers:
                         try:
                             model_info.append(server_tags[server[0]][model])
@@ -451,7 +452,7 @@ def main():
                     server_tags[server[0]] = {model['id']: model for model in json.loads(response.content)['data']}
                 for model in models:
                     available_servers = [server for server in self.servers if model in server[1]['models']]
-                    print(f"Available servers for model '{model}': {[s[0] for s in available_servers]}")
+                    logger.debug("Available servers for model '%s': %s", model, str([s[0] for s in available_servers]))
                     for server in available_servers:
                         try:
                             model_info.append(server_tags[server[0]][model])
@@ -507,14 +508,14 @@ def main():
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True  # Gracefully handle shutdown
 
-    print('Starting server')
+    logger.info('Starting server')
     port = int(check_sys_env('OP_PORT', args.port))
     server = ThreadedHTTPServer(('', port), RequestHandler)
-    print(f'Running server on port {port}')
+    logger.info('Running server on port %s', port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down the server.")
+        logger.info("Shutting down the server.")
         server.server_close()
 
 
