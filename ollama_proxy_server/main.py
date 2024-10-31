@@ -368,7 +368,6 @@ def main():
                                 except json.decoder.JSONDecodeError:
                                     print(f"Failed to parse response: {response.content}")
                                     print(f"Response: {response}")
-                                    print(f"Exception: {e}")
                                 break
                             else:
                                 try:
