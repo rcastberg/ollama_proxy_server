@@ -12,7 +12,7 @@ RUN apt update \
 COPY . /ollama_proxy_server
 
 # Change working directory to cloned git repository
-WORKDIR ollama_proxy_server
+WORKDIR /ollama_proxy_server
 
 # Install all needed requirements
 RUN pip3 install -e .

@@ -14,11 +14,11 @@ Make sure you have Python (>=3.8) and Apache installed on your system before pro
 2. Build your Container-Image with the Dockerfile provided by this repository
 
 ### Podman
-`cd ollama_proxy_server`  
+`cd ollama_proxy_server`
 `podman build -t ollama_proxy_server:latest .`
 
 ### Docker
-`cd ollama_proxy_server`  
+`cd ollama_proxy_server`
 `docker build -t ollama_proxy_server:latest .`
 
 ## Configuration
@@ -45,7 +45,7 @@ user1:key1
 user2:key2
 ```
 Replace `user1`, `key1`, `user2`, and `key2` with the desired username and API key for each user.
-You can also use the `ollama_proxy_add_user` utility to add user and generate a key automatically: 
+You can also use the `ollama_proxy_add_user` utility to add user and generate a key automatically:
 ```makefile
 ollama_proxy_add_user --users_list [path to the authorized `authorized_users.txt` file]
 ```
@@ -68,8 +68,8 @@ Replace `<METHOD>` with the HTTP method (GET or POST), `<USER_KEY>` with a valid
 For example:
 ```bash
 curl -X POST -H "Authorization: Bearer user1:key1" http://localhost:8080/api/generate --data '{'model':'mixtral:latest,'prompt': "Once apon a time,","stream":false,"temperature": 0.3,"max_tokens": 1024}'
-``` 
+```
 ### Starting the server using the created Container-Image
-To start the proxy in background with the above created image, you can use either   
+To start the proxy in background with the above created image, you can use either
 1) docker: `docker run -d --name ollama-proxy-server -p 8080:8080 ollama_proxy_server:latest`
 2) podman: `podman run -d --name ollama-proxy-server -p 8080:8080 ollama_proxy_server:latest`

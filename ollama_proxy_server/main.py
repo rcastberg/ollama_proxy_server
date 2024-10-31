@@ -3,15 +3,15 @@ import configparser
 import csv
 import datetime
 import json
+import logging
+import os
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from queue import Queue
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
-import re
-import os
 
-import logging
 import requests
 
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
@@ -126,12 +126,12 @@ def main():
                        'input_tokens': input_tokens, 'output_tokens': output_tokens, 'error': error}
                 logger.debug('Log: %s', str(row))
                 writer.writerow(row)
-                
+
         def ring_buffer(self, data, new_data):
             data.pop(0)
             data.append(new_data)
             return data
-            
+
         def _send_response(self, response):
             self.send_response(response.status_code)
             for key, value in response.headers.items():
@@ -160,7 +160,7 @@ def main():
             except Exception as e:
                 logging.error(f"An unexpected error occurred: {e}")
             return b''.join(eval_data), count
-        
+
         def do_GET(self):
             self.log_request()
             self.proxy()
@@ -204,7 +204,7 @@ def main():
             for attempt in range(self.retry_attempts):
                 try:
                     # Send request to backend server with timeout
-                    print(f"Attempt {attempt+1} forwarding request to {server_info['url'] + path}")
+                    print(f"Attempt {attempt + 1} forwarding request to {server_info['url'] + path}")
                     response = requests.request(
                         self.command,
                         server_info['url'] + path,
@@ -217,9 +217,9 @@ def main():
                     print(f"Received response with status code {response.status_code}")
                     return response
                 except requests.Timeout:
-                    print(f"Timeout on attempt {attempt+1} forwarding request to {server_info['url']}")
+                    print(f"Timeout on attempt {attempt + 1} forwarding request to {server_info['url']}")
                 except Exception as ex:
-                    print(f"Error on attempt {attempt+1} forwarding request: {ex}")
+                    print(f"Error on attempt {attempt + 1} forwarding request: {ex}")
             return None  # If all attempts failed
 
         def proxy(self):
@@ -357,7 +357,7 @@ def main():
                                         info = json.loads(response.content)
                                     except json.decoder.JSONDecodeError:
                                         # Fall back method, return number of words:
-                                        # Should eventually be fixed by : https://github.com/ollama/ollama/pull/6784 
+                                        # Should eventually be fixed by : https://github.com/ollama/ollama/pull/6784
                                         # See https://github.com/ollama/ollama/issues/4448
                                         info = {'usage': {'prompt_tokens': 0, 'completion_tokens': 0}}
                                         info['usage']["prompt_tokens"] = sum([len(i['content'].split()) for i in post_data_dict['messages']])

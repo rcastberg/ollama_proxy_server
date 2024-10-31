@@ -5,9 +5,9 @@ import subprocess
 import time
 import unittest
 from pathlib import Path
-from dotenv import load_dotenv
 
 import requests
+from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -46,10 +46,11 @@ class CheckOllamaRunning(unittest.TestCase):
         self.assertIsInstance(response.json()['response'], str)
         self.assertGreater(len(response.json()['response']), 10)
 
+
 class TestRestAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        #Make sure Ollama is running:
+        # Make sure Ollama is running:
         url = f'{OLLAMA_SERVER}/'
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
@@ -71,7 +72,6 @@ class TestRestAPI(unittest.TestCase):
                 return
         logger.debug("Proxy server failed to start")
         raise Exception("Unable to start Proxy Server after 40 seconds")
-
 
     @classmethod
     def tearDownClass(cls):
@@ -126,7 +126,7 @@ class TestRestAPI(unittest.TestCase):
         self.assertIn(b'response', response.content)
         self.assertIsInstance(response.content.split(b'\n')[-2], bytes)
         self.assertGreater(len(response.content.split(b'\n')), 10)
-        
+
     def test_ollama_tags(self):
         url = f'http://{PROXY_SERVER}/api/tags'
         headers = {
@@ -172,7 +172,7 @@ class TestRestAPI(unittest.TestCase):
         self.assertIn('choices', response.json())
         self.assertIsInstance(response.json()['choices'][0]['message']['content'], str)
         self.assertGreater(len(response.json()['choices'][0]['message']['content']), 10)
-        
+
     def test_openai_models(self):
         url = f'http://{PROXY_SERVER}/v1/models'
         headers = {
@@ -224,7 +224,7 @@ class TestRestAPI(unittest.TestCase):
         self.assertIn('choices', response.json())
         self.assertIsInstance(response.json()['choices'][0]['message']['content'], str)
         self.assertGreater(len(response.json()['choices'][0]['message']['content']), 10)
-        
+
 
 if __name__ == '__main__':
     unittest.main(failfast=True)
