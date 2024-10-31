@@ -141,10 +141,12 @@ def main():
             self.end_headers()
 
             chunks = [b'', b'', b'']
+            count = 0
             eval_data = None
             try:
                 for chunk in response.iter_content(chunk_size=1024):
                     if chunk:
+                        count += 1
                         self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
                         self.wfile.flush()
                         chunks = self.ring_buffer(chunks, chunk)
@@ -157,7 +159,7 @@ def main():
                 pass
             except Exception as e:
                 logging.error(f"An unexpected error occurred: {e}")
-            return b''.join(eval_data)
+            return b''.join(eval_data), count
         
         def do_GET(self):
             self.log_request()
@@ -287,7 +289,7 @@ def main():
 
             # Endpoints that require model-based routing
             model_based_endpoints = ['/api/generate', '/api/chat', '/api/chat/completions', '/generate', '/chat',
-                                     '/v1/chat/completions']
+                                     '/v1/chat/completions', '/v1/completions']
             stripped_path = re.sub('/$', '', path)
             if stripped_path in model_based_endpoints:
                 if not model:
@@ -345,15 +347,25 @@ def main():
                         response = self.send_request_with_retries(min_queued_server[1], path, get_params,
                                                                   post_data_dict, backend_headers)
                         if response:
-                            last_chunk = self._send_response(response)
+                            last_chunk, count = self._send_response(response)
                             if '/v1/' in stripped_path:  # ChatGPT
                                 # add stuff
                                 try:
-                                    input_tokens = json.loads(response.content)['usage']["prompt_tokens"]
-                                    output_tokens = json.loads(response.content)['usage']["completion_tokens"]
+                                    info = json.loads(last_chunk.split(b'\n')[-2])
+                                except IndexError:
+                                    info = json.loads(response.content)
+                                try:
+                                    input_tokens = info['usage']["prompt_tokens"]
+                                    output_tokens = info['usage']["completion_tokens"]
                                 except json.decoder.JSONDecodeError:
-                                    print(f"Failed to find tokens usage, response: {response.content}")
-                                    print(f"Response: {response}")
+                                    # Fall back method, return number of words:
+                                    try:
+                                        input_tokens = sum([len(i['content'].split()) for i in post_data_dict['messages']])
+                                        output_tokens = count
+                                    except Exception as e:
+                                        print(f"Failed to parse response: {response.content}")
+                                        print(f"Response: {response}")
+                                        print(f"Exception: {e}")
                                 break
                             else:
                                 try:

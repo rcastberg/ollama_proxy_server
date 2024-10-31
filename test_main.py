@@ -190,6 +190,41 @@ class TestRestAPI(unittest.TestCase):
         self.assertIn('object', response.json())
         self.assertIn('data', response.json())
 
+    def test_openai_multiplemessages(self):
+        url = f'http://{PROXY_SERVER}/v1/chat/completions'
+        headers = {
+            'Authorization': f'Bearer {AUTH_USER}',
+            'Content-Type': 'application/json'
+        }
+        data = {
+            "model": "tinyllama:latest",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant."
+                },
+                {
+                    "role": "user",
+                    "content": "Why is the sky blue?"
+                },
+                {
+                    "role": "user",
+                    "content": "Why is the sky red at night?"
+                }
+            ]
+        }
+
+        response = requests.post(url, json=data, headers=headers, timeout=30)
+
+        # Check if the request was successful
+        self.assertEqual(response.status_code, 200)
+
+        # Check if the response contains the expected data structure
+        # Adjust the expected structure based on your actual response
+        self.assertIn('choices', response.json())
+        self.assertIsInstance(response.json()['choices'][0]['message']['content'], str)
+        self.assertGreater(len(response.json()['choices'][0]['message']['content']), 10)
+        
 
 if __name__ == '__main__':
     unittest.main(failfast=True)
