@@ -17,6 +17,9 @@ WORKDIR /ollama_proxy_server
 # Install all needed requirements
 RUN pip3 install -e .
 
+# Print logs to docker logs
+ENV PYTHONUNBUFFERED=1
+
 # Start the proxy server as entrypoint
 ENTRYPOINT ["ollama_proxy_server"]
 
