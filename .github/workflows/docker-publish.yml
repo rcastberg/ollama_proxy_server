@@ -56,6 +56,24 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
+      # Include build info in the Docker image
+      # https://stackoverflow.com/a/58178121/315168
+      - name: Scrape build info
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # https://stackoverflow.com/questions/67051284/how-to-set-a-dockerfile-arg-in-github-actions
+          # https://stackoverflow.com/a/63619526/315168
+          build-args: |
+            GIT_VERSION_TAG=${{ env.RELEASE_VERSION }}
+            GIT_COMMIT_MESSAGE=${{ github.event.head_commit.message }}
+            GIT_VERSION_HASH=${{ github.sha }}
+
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
       - name: Build and push Docker image

@@ -51,7 +51,7 @@ def get_config(filename, config_string=None, default_timeout=300):
             "timeout": timeout,
         }
         servers.append((name, server_info))
-    if config_string is None:
+    if config_string is None or config_string == "":
         logger.debug("Loaded servers from %s: %s", filename, servers)
     else:
         logger.debug("Loaded servers from env config string")
@@ -122,7 +122,7 @@ def main():
 
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
-    logger.debug('Arguments: %s', args)
+
     class RequestHandler(BaseHTTPRequestHandler):
         # Class variables to access arguments and servers
         retry_attempts = check_sys_env(
