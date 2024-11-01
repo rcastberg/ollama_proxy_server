@@ -682,8 +682,9 @@ def main():
                 self.end_headers()
                 self.wfile.write(b"Unsupported in proxy.")
             elif stripped_path in ["/local/reload_config"]:
-                self.servers = get_config(args.config, config_string=check_sys_env("OP_SERVERS", "").replace(";", "\n"))
-                self.authorized_users = get_authorized_users(args.users_list, check_sys_env("OP_AUTHORIZED_USERS"))
+                # Update the values in the main class.  This is a hack to allow the server to reload the config file.
+                RequestHandler.servers = get_config(args.config, config_string=check_sys_env("OP_SERVERS", "").replace(";", "\n"))
+                RequestHandler.authorized_users = get_authorized_users(args.users_list, check_sys_env("OP_AUTHORIZED_USERS"))
                 self.send_response(200)
                 self.end_headers()
                 new_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
