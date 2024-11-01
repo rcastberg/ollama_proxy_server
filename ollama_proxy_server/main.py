@@ -93,6 +93,24 @@ def check_sys_env(name, default=None):
         return None
 
 
+def get_version():
+    try:
+        with open("GIT_VERSION_TAG.txt", "r") as f:
+            version = f.read().strip()
+    except FileNotFoundError:
+        version = "unknown"
+    try:
+        with open("GIT_VERSION_HASH.txt", "r") as f:
+            hash = f.read().strip()
+    except FileNotFoundError:
+        try:
+            hash = os.popen('git rev-parse --verify HEAD').read().strip()
+        except Exception as e:
+            logger.debug("Exception: %s", e)
+            hash = "unknown"
+    return f"Version:{version}, Git-Hash:{hash}"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -122,6 +140,7 @@ def main():
 
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
+    logger.info("Version: %s", get_version())
 
     class RequestHandler(BaseHTTPRequestHandler):
         # Class variables to access arguments and servers
@@ -142,10 +161,6 @@ def main():
         logger.debug(
             f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, deactivate_security={deactivate_security}, log_path={log_path}"
         )
-
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.user = None
 
         def add_access_log_entry(
             self,
