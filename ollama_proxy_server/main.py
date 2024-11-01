@@ -577,16 +577,13 @@ def main():
 
                     if response:
                         logger.debug("Received response from server %s", server[0])
+                        server_tags[server[0]] = {
+                            model["name"]: model
+                            for model in json.loads(response.content)["models"]
+                        }
                     else:
-                        logger.debug("Received response from server %s", server[0])
-                        self.wfile.write(
-                            bytes("Failed to forward request to {server[0]}.")
-                        )
+                        logger.debug("Failed to receive response from server %s", server[0])
 
-                    server_tags[server[0]] = {
-                        model["name"]: model
-                        for model in json.loads(response.content)["models"]
-                    }
                 for model in models:
                     available_servers = [
                         server
@@ -669,6 +666,18 @@ def main():
                 self.send_response(503)
                 self.end_headers()
                 self.wfile.write(b"Unsupported in proxy.")
+            elif stripped_path in ["/local/reload_config"]:
+                self.servers = get_config(args.config, config_string=check_sys_env("OP_SERVERS", "").replace(";", "\n"))
+                self.authorized_users = get_authorized_users(args.users_list, check_sys_env("OP_AUTHORIZED_USERS"))
+                self.send_response(200)
+                self.end_headers()
+                new_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
+
+                # Remove queues from the config as they are not serializable
+                def default(o):
+                    return f"<<non-serializable: {type(o).__qualname__}>>"
+
+                self.wfile.write(json.dumps(new_config, default=default).encode("utf-8"))
             elif stripped_path in ["/api/ps"]:
                 logger.debug("ps servers")
                 server_ps = {}
