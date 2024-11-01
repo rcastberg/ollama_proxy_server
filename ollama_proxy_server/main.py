@@ -62,6 +62,7 @@ def get_authorized_users(filename, users_env=None):
     if users_env:
         lines = users_env.replace(";", "\n").split("\n")
     else:
+        logger.debug("Loading authorized users from %s", filename)
         with open(filename, "r", encoding="utf8") as f:
             lines = f.readlines()
     authorized_users = {}
@@ -121,7 +122,7 @@ def main():
 
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
-
+    logger.debug('Arguments: %s', args)
     class RequestHandler(BaseHTTPRequestHandler):
         # Class variables to access arguments and servers
         retry_attempts = check_sys_env(
