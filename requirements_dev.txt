@@ -7,3 +7,6 @@ pre-commit
 flake8
 black
 isort
+pytest
+python-dotenv
+pytest-dependency

@@ -30,15 +30,10 @@ def get_config(filename, config_string=None, default_timeout=300):
         try:
             timeout = int(config[name].get("timeout", default_timeout))
             if timeout <= 0:
-                logger.info(
-                    "Invalid timeout value for server '%s'. Using default %d seconds.",
-                    name,
-                    default_timeout,
-                )
-                timeout = default_timeout
-        except ValueError:
+                raise ValueError
+        except (ValueError, TypeError):
             logger.info(
-                "Non-integer timeout value for server %s. Using default %d seconds.",
+                "Invalid timeout value for server %s. Using default %d seconds.",
                 name,
                 default_timeout,
             )
@@ -111,7 +106,7 @@ def get_version():
     return f"Version:{version}, Git-Hash:{hash}"
 
 
-def main():
+def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config", default="config.ini", help="Path to the config file"
@@ -138,6 +133,79 @@ def main():
     )
     args = parser.parse_args()
 
+    return args
+
+
+def ring_buffer(data, new_data):
+    data.pop(0)
+    data.append(new_data)
+    return data
+
+
+def add_access_log_entry(
+    log_path,
+    event,
+    user,
+    ip_address,
+    access,
+    server,
+    nb_queued_requests_on_server,
+    error="",
+    input_tokens=0,
+    output_tokens=0,
+):
+    log_file_path = Path(log_path)
+    logger.debug("Adding log entry")
+    if not log_file_path.exists():
+        with open(
+            log_file_path, mode="w", newline="", encoding="utf8"
+        ) as csvfile:
+            fieldnames = [
+                "time_stamp",
+                "event",
+                "user_name",
+                "ip_address",
+                "access",
+                "server",
+                "nb_queued_requests_on_server",
+                "input_tokens",
+                "output_tokens",
+                "error",
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+    with open(log_file_path, mode="a", newline="", encoding="utf8") as csvfile:
+        fieldnames = [
+            "time_stamp",
+            "event",
+            "user_name",
+            "ip_address",
+            "access",
+            "server",
+            "nb_queued_requests_on_server",
+            "input_tokens",
+            "output_tokens",
+            "error",
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        row = {
+            "time_stamp": str(datetime.datetime.now()),
+            "event": event,
+            "user_name": user,
+            "ip_address": ip_address,
+            "access": access,
+            "server": server,
+            "nb_queued_requests_on_server": nb_queued_requests_on_server,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "error": error,
+        }
+        logger.debug("Log: %s", str(row))
+        writer.writerow(row)
+
+
+def main(args):
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
     logger.info("Version: %s", get_version())
@@ -162,73 +230,6 @@ def main():
             f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, deactivate_security={deactivate_security}, log_path={log_path}"
         )
 
-        def add_access_log_entry(
-            self,
-            event,
-            user,
-            ip_address,
-            access,
-            server,
-            nb_queued_requests_on_server,
-            error="",
-            input_tokens=0,
-            output_tokens=0,
-        ):
-            log_file_path = Path(self.log_path)
-            logger.debug("Adding log entry")
-            if not log_file_path.exists():
-                with open(
-                    log_file_path, mode="w", newline="", encoding="utf8"
-                ) as csvfile:
-                    fieldnames = [
-                        "time_stamp",
-                        "event",
-                        "user_name",
-                        "ip_address",
-                        "access",
-                        "server",
-                        "nb_queued_requests_on_server",
-                        "input_tokens",
-                        "output_tokens",
-                        "error",
-                    ]
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                    writer.writeheader()
-
-            with open(log_file_path, mode="a", newline="", encoding="utf8") as csvfile:
-                fieldnames = [
-                    "time_stamp",
-                    "event",
-                    "user_name",
-                    "ip_address",
-                    "access",
-                    "server",
-                    "nb_queued_requests_on_server",
-                    "input_tokens",
-                    "output_tokens",
-                    "error",
-                ]
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                row = {
-                    "time_stamp": str(datetime.datetime.now()),
-                    "event": event,
-                    "user_name": user,
-                    "ip_address": ip_address,
-                    "access": access,
-                    "server": server,
-                    "nb_queued_requests_on_server": nb_queued_requests_on_server,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "error": error,
-                }
-                logger.debug("Log: %s", str(row))
-                writer.writerow(row)
-
-        def ring_buffer(self, data, new_data):
-            data.pop(0)
-            data.append(new_data)
-            return data
-
         def _send_response(self, response):
             self.send_response(response.status_code)
             for key, value in response.headers.items():
@@ -250,7 +251,7 @@ def main():
                         count += 1
                         self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
                         self.wfile.flush()
-                        chunks = self.ring_buffer(chunks, chunk)
+                        chunks = ring_buffer(chunks, chunk)
                         if b"eval_count" in chunks[1]:
                             eval_data = chunks
                 if not eval_data:
@@ -353,7 +354,8 @@ def main():
                 # Extract the bearer token from the headers
                 auth_header = self.headers.get("Authorization")
                 if not auth_header or not auth_header.startswith("Bearer "):
-                    self.add_access_log_entry(
+                    add_access_log_entry(
+                        log_path=self.log_path,
                         event="rejected",
                         user="unknown",
                         ip_address=client_ip,
@@ -364,7 +366,8 @@ def main():
                     )
                 else:
                     token = auth_header.split(" ")[1]
-                    self.add_access_log_entry(
+                    add_access_log_entry(
+                        log_path=self.log_path,
                         event="rejected",
                         user=token,
                         ip_address=client_ip,
@@ -469,7 +472,8 @@ def main():
                     que = min_queued_server[1]["queue"]
                     try:
                         que.put_nowait(1)
-                        self.add_access_log_entry(
+                        add_access_log_entry(
+                            log_path=self.log_path,
                             event="gen_request",
                             user=self.user,
                             ip_address=client_ip,
@@ -479,7 +483,8 @@ def main():
                         )
                     except Exception as e:
                         logger.debug("Failed to put request in queue: %s", e)
-                        self.add_access_log_entry(
+                        add_access_log_entry(
+                            log_path=self.log_path,
                             event="gen_error",
                             user=self.user,
                             ip_address=client_ip,
@@ -561,7 +566,8 @@ def main():
                     finally:
                         try:
                             que.get_nowait()
-                            self.add_access_log_entry(
+                            add_access_log_entry(
+                                log_path=self.log_path,
                                 event="gen_done",
                                 user=self.user,
                                 ip_address=client_ip,
@@ -750,4 +756,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)
