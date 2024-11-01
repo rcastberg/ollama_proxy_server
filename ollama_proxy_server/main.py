@@ -205,7 +205,8 @@ def add_access_log_entry(
         writer.writerow(row)
 
 
-def main(args=None):
+def main():
+    args = parse_args()
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
     logger.info("Version: %s", get_version())
@@ -756,5 +757,4 @@ def main(args=None):
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main()
