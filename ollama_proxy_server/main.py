@@ -363,6 +363,7 @@ def main():
                 client_ip, client_port = self.client_address
                 # Extract the bearer token from the headers
                 auth_header = self.headers.get("Authorization")
+                logger.debug("Auth header: %s", auth_header)
                 if not auth_header or not auth_header.startswith("Bearer "):
                     add_access_log_entry(
                         log_path=self.log_path,
@@ -374,6 +375,7 @@ def main():
                         nb_queued_requests_on_server=-1,
                         error="Authentication failed",
                     )
+                    logger.debug("No authentication token provided")
                 else:
                     token = auth_header.split(" ")[1]
                     add_access_log_entry(
@@ -386,8 +388,10 @@ def main():
                         nb_queued_requests_on_server=-1,
                         error="Authentication failed",
                     )
+                    logger.debug("Invalid user or key")
                 self.send_response(403)
                 self.end_headers()
+                self.wfile.write(b"No authentication token provided")
                 return
             get_params = parse_qs(url.query) or {}
 
