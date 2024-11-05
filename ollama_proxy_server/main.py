@@ -56,6 +56,7 @@ def get_config(filename, config_string=None, default_timeout=300):
 def get_authorized_users(filename, users_env=None):
     if users_env:
         lines = users_env.replace(";", "\n").split("\n")
+        filename = "env: OP_AUTHORIZED_USERS"
     else:
         logger.debug("Loading authorized users from %s", filename)
         with open(filename, "r", encoding="utf8") as f:
@@ -205,10 +206,12 @@ def add_access_log_entry(
         writer.writerow(row)
 
 
-def main(args=None):
+def main():
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
     logger.info("Version: %s", get_version())
+    args = parse_args()
+    logger.debug("Default Arguments: %s", args)
 
     class RequestHandler(BaseHTTPRequestHandler):
         # Class variables to access arguments and servers
@@ -756,5 +759,4 @@ def main(args=None):
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main()
