@@ -352,6 +352,12 @@ def main():
                 self.end_headers()
                 self.wfile.write(b"Ollama is running")
                 return
+            if path == "/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"OK")
+                return
             if not self.deactivate_security and not self._validate_user_and_key():
                 logger.warning("User is not authorized")
                 client_ip, client_port = self.client_address
