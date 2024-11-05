@@ -344,6 +344,7 @@ def main():
         def proxy(self):
             self.user = "unknown"
             url = urlparse(self.path)
+            logger.debug("URL: %s", url)
             path = url.path
             if path == "/":
                 self.send_response(200)
