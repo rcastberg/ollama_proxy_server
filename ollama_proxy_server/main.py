@@ -364,6 +364,7 @@ def main():
                 # Extract the bearer token from the headers
                 auth_header = self.headers.get("Authorization")
                 logger.debug("Auth header: %s", auth_header)
+                logger.debug("Client headers: %s", self.headers)
                 if not auth_header or not auth_header.startswith("Bearer "):
                     add_access_log_entry(
                         log_path=self.log_path,
