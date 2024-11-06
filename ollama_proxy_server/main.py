@@ -150,6 +150,123 @@ def parse_args():
     return args
 
 
+def get_running_models_openai(class_object, path, get_params, post_data_dict, backend_headers):
+    logger.debug("List supported models")
+    models = [
+        model for server in class_object.servers for model in server[1]["models"]
+    ]
+    model_info = []
+    server_tags = {}
+    for server in class_object.servers:
+        response = class_object.send_request_with_retries(
+            server[1], path, get_params, post_data_dict, backend_headers
+        )
+
+        if response:
+            logger.debug("Received response from server %s", server[0])
+        else:
+            logger.debug("Received response from server %s", server[0])
+            class_object.wfile.write(
+                bytes(f"Failed to forward request to {server[0]}.")
+            )
+
+        server_tags[server[0]] = {
+            model["id"]: model
+            for model in json.loads(response.content)["data"]
+        }
+    for model in models:
+        available_servers = [
+            server
+            for server in class_object.servers
+            if model in server[1]["models"]
+        ]
+        logger.debug(
+            "Available servers for model '%s': %s",
+            model,
+            str([s[0] for s in available_servers]),
+        )
+        for server in available_servers:
+            try:
+                model_info.append(server_tags[server[0]][model])
+            except Exception as e:
+                logger.debug("Model not found, Exception: %s", e)
+                logger.warning(
+                    "Model %s not found in server %s", model, server[0]
+                )
+    model_info = {"object": "list", "data": model_info}
+    return model_info
+
+
+def get_running_models(class_object, path, get_params, post_data_dict, backend_headers):
+    logger.debug("ps servers")
+    server_ps = {}
+    for server in class_object.servers:
+        response = class_object.send_request_with_retries(
+            server[1], path, get_params, post_data_dict, backend_headers
+        )
+
+        if response:
+            logger.debug("Received response from server %s", server[0])
+            try:
+                server_ps[server[0]] = json.loads(response.content)['models']
+                server_ps[server[0] + '_error'] = "None"
+            except KeyError:
+                logger.debug("No models found in response from server %s", server[0])
+                server_ps[server[0]] = []
+                server_ps[server[0] + '_error'] = "JSON decode error"
+                continue
+        else:
+            server_ps[server[0]] = []
+            server_ps[server[0] + '_error'] = "No response"
+            logger.debug("Received No response from server %s", server[0])
+
+    return server_ps
+
+
+def return_tags(class_object, path, get_params, post_data_dict, backend_headers):
+    logger.debug("List supported models")
+    models = [
+        model for server in class_object.servers for model in server[1]["models"]
+    ]
+    model_info = []
+    server_tags = {}
+    for server in class_object.servers:
+        response = class_object.send_request_with_retries(
+            server[1], path, get_params, post_data_dict, backend_headers
+        )
+
+        if response:
+            logger.debug("Received response from server %s", server[0])
+            server_tags[server[0]] = {
+                model["name"]: model
+                for model in json.loads(response.content)["models"]
+            }
+        else:
+            logger.debug("Failed to receive response from server %s", server[0])
+
+    for model in models:
+        available_servers = [
+            server
+            for server in class_object.servers
+            if model in server[1]["models"]
+        ]
+        logger.debug(
+            "Available servers for model '%s': %s",
+            model,
+            str([s[0] for s in available_servers]),
+        )
+        for server in available_servers:
+            try:
+                model_info.append(server_tags[server[0]][model])
+            except Exception as e:
+                logger.debug("Model not found, Exception: %s", e)
+                logger.warning(
+                    "Model %s not found in server %s", model, server[0]
+                )
+    model_info = {"models": model_info}
+    return model_info
+
+
 def ring_buffer(data, new_data):
     data.pop(0)
     data.append(new_data)
@@ -623,94 +740,13 @@ def main():
                     self.end_headers()
                     self.wfile.write(b"No available servers could handle the request.")
             elif stripped_path in ["/api/tags"]:
-                logger.debug("List supported models")
-                models = [
-                    model for server in self.servers for model in server[1]["models"]
-                ]
-                model_info = []
-                server_tags = {}
-                for server in self.servers:
-                    response = self.send_request_with_retries(
-                        server[1], path, get_params, post_data_dict, backend_headers
-                    )
-
-                    if response:
-                        logger.debug("Received response from server %s", server[0])
-                        server_tags[server[0]] = {
-                            model["name"]: model
-                            for model in json.loads(response.content)["models"]
-                        }
-                    else:
-                        logger.debug("Failed to receive response from server %s", server[0])
-
-                for model in models:
-                    available_servers = [
-                        server
-                        for server in self.servers
-                        if model in server[1]["models"]
-                    ]
-                    logger.debug(
-                        "Available servers for model '%s': %s",
-                        model,
-                        str([s[0] for s in available_servers]),
-                    )
-                    for server in available_servers:
-                        try:
-                            model_info.append(server_tags[server[0]][model])
-                        except Exception as e:
-                            logger.debug("Model not found, Exception: %s", e)
-                            logger.warning(
-                                "Model %s not found in server %s", model, server[0]
-                            )
-                model_info = {"models": model_info}
+                model_info = return_tags(self, path, get_params, post_data_dict, backend_headers)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(model_info).encode("utf-8"))
             elif stripped_path in ["/v1/models"]:
-                logger.debug("List supported models")
-                models = [
-                    model for server in self.servers for model in server[1]["models"]
-                ]
-                model_info = []
-                server_tags = {}
-                for server in self.servers:
-                    response = self.send_request_with_retries(
-                        server[1], path, get_params, post_data_dict, backend_headers
-                    )
-
-                    if response:
-                        logger.debug("Received response from server %s", server[0])
-                    else:
-                        logger.debug("Received response from server %s", server[0])
-                        self.wfile.write(
-                            bytes(f"Failed to forward request to {server[0]}.")
-                        )
-
-                    server_tags[server[0]] = {
-                        model["id"]: model
-                        for model in json.loads(response.content)["data"]
-                    }
-                for model in models:
-                    available_servers = [
-                        server
-                        for server in self.servers
-                        if model in server[1]["models"]
-                    ]
-                    logger.debug(
-                        "Available servers for model '%s': %s",
-                        model,
-                        str([s[0] for s in available_servers]),
-                    )
-                    for server in available_servers:
-                        try:
-                            model_info.append(server_tags[server[0]][model])
-                        except Exception as e:
-                            logger.debug("Model not found, Exception: %s", e)
-                            logger.warning(
-                                "Model %s not found in server %s", model, server[0]
-                            )
-                model_info = {"object": "list", "data": model_info}
+                model_info = get_running_models_openai(self, path, get_params, post_data_dict, backend_headers)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -840,23 +876,7 @@ def main():
                     return f"<<non-serializable: {type(o).__qualname__}>>"
                 self.wfile.write(json.dumps(new_config, default=default).encode("utf-8"))
             elif stripped_path in ["/api/ps"]:
-                logger.debug("ps servers")
-                server_ps = {}
-                for server in self.servers:
-                    response = self.send_request_with_retries(
-                        server[1], path, get_params, post_data_dict, backend_headers
-                    )
-
-                    if response:
-                        logger.debug("Received response from server %s", server[0])
-                    else:
-                        logger.debug("Received response from server %s", server[0])
-                        self.wfile.write(
-                            bytes(f"Failed to forward request to {server[0]}.")
-                        )
-
-                    server_ps[server[0]] = json.loads(response.content)
-
+                server_ps = get_running_models(self, path, get_params, post_data_dict, backend_headers)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
