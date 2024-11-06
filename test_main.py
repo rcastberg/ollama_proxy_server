@@ -22,7 +22,7 @@ OLLMA_MODEL = os.getenv("OLLAMA_TEST_MODEL")
 PROXY_SERVER = os.getenv("PROXY_SERVER")
 PROXY_API_KEY = os.getenv("PROXY_API_KEY")
 PROXY_PORT = os.getenv("OP_PORT")
-AUTH_USER = os.getenv("OP_AUTHORIZED_USERS")
+AUTH_USER = ':'.join(os.getenv("OP_AUTHORIZED_USERS").split(':')[0:2])
 
 
 class CheckOllamaRunning(unittest.TestCase):
