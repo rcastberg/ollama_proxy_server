@@ -150,53 +150,6 @@ def parse_args():
     return args
 
 
-def get_running_models_openai(class_object, path, get_params, post_data_dict, backend_headers):
-    logger.debug("List supported models")
-    models = [
-        model for server in class_object.servers for model in server[1]["models"]
-    ]
-    model_info = []
-    server_tags = {}
-    for server in class_object.servers:
-        response = class_object.send_request_with_retries(
-            server[1], path, get_params, post_data_dict, backend_headers
-        )
-
-        if response:
-            logger.debug("Received response from server %s", server[0])
-        else:
-            logger.debug("Received response from server %s", server[0])
-            class_object.wfile.write(
-                bytes(f"Failed to forward request to {server[0]}.")
-            )
-
-        server_tags[server[0]] = {
-            model["id"]: model
-            for model in json.loads(response.content)["data"]
-        }
-    for model in models:
-        available_servers = [
-            server
-            for server in class_object.servers
-            if model in server[1]["models"]
-        ]
-        logger.debug(
-            "Available servers for model '%s': %s",
-            model,
-            str([s[0] for s in available_servers]),
-        )
-        for server in available_servers:
-            try:
-                model_info.append(server_tags[server[0]][model])
-            except Exception as e:
-                logger.debug("Model not found, Exception: %s", e)
-                logger.warning(
-                    "Model %s not found in server %s", model, server[0]
-                )
-    model_info = {"object": "list", "data": model_info}
-    return model_info
-
-
 def get_running_models(class_object, path, get_params, post_data_dict, backend_headers):
     logger.debug("ps servers")
     server_ps = {}
@@ -223,13 +176,22 @@ def get_running_models(class_object, path, get_params, post_data_dict, backend_h
     return server_ps
 
 
-def return_tags(class_object, path, get_params, post_data_dict, backend_headers):
+def get_available_models(class_object, path, get_params, post_data_dict, backend_headers):
     logger.debug("List supported models")
     models = [
         model for server in class_object.servers for model in server[1]["models"]
     ]
     model_info = []
     server_tags = {}
+    if "v1/models" in path:
+        # OpenAI
+        model_entry_name = "id"
+        data_entry_name = "data"
+    else:
+        # Ollama
+        model_entry_name = "name"
+        data_entry_name = "models"
+
     for server in class_object.servers:
         response = class_object.send_request_with_retries(
             server[1], path, get_params, post_data_dict, backend_headers
@@ -238,8 +200,8 @@ def return_tags(class_object, path, get_params, post_data_dict, backend_headers)
         if response:
             logger.debug("Received response from server %s", server[0])
             server_tags[server[0]] = {
-                model["name"]: model
-                for model in json.loads(response.content)["models"]
+                model[model_entry_name]: model
+                for model in json.loads(response.content)[data_entry_name]
             }
         else:
             logger.debug("Failed to receive response from server %s", server[0])
@@ -263,7 +225,10 @@ def return_tags(class_object, path, get_params, post_data_dict, backend_headers)
                 logger.warning(
                     "Model %s not found in server %s", model, server[0]
                 )
-    model_info = {"models": model_info}
+    if "v1/models" in path:
+        model_info = {"object": "list", "data": model_info}
+    else:
+        model_info = {"models": model_info}
     return model_info
 
 
@@ -559,6 +524,8 @@ def main():
                 post_data = None
                 post_data_dict = {}
 
+            stripped_path = re.sub("/$", "", path)
+
             # Endpoints that require model-based routing
             model_based_endpoints = [
                 "/api/generate",
@@ -569,7 +536,6 @@ def main():
                 "/v1/chat/completions",
                 "/v1/completions",
             ]
-            stripped_path = re.sub("/$", "", path)
             if stripped_path in model_based_endpoints:
                 # Extract model from post_data or get_params
                 model = post_data_dict.get("model")
@@ -739,25 +705,14 @@ def main():
                     self.send_response(503)
                     self.end_headers()
                     self.wfile.write(b"No available servers could handle the request.")
-            elif stripped_path in ["/api/tags"]:
-                model_info = return_tags(self, path, get_params, post_data_dict, backend_headers)
+            elif stripped_path in ["/api/tags", "/v1/models"]:
+                model_info = get_available_models(self, path, get_params, post_data_dict, backend_headers)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(model_info).encode("utf-8"))
-            elif stripped_path in ["/v1/models"]:
-                model_info = get_running_models_openai(self, path, get_params, post_data_dict, backend_headers)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(model_info).encode("utf-8"))
-            elif stripped_path in [
-                "/api/pull",
-                "/api/delete",
-                "/api/push",
-                "/api/copy",
-                "/api/create",
-            ]:
+            elif stripped_path in ["/api/pull", "/api/delete", "/api/push",
+                                   "/api/copy", "/api/create"]:
                 self.send_response(503)
                 self.end_headers()
                 self.wfile.write(b"Unsupported in proxy.")
@@ -858,23 +813,22 @@ def main():
                 RequestHandler.authorized_users = get_authorized_users(args.users_list, check_sys_env("OP_AUTHORIZED_USERS"))
                 self.send_response(200)
                 self.end_headers()
-                new_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
+                current_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
 
                 # Remove queues from the config as they are not serializable
                 def default(o):
                     return f"<<non-serializable: {type(o).__qualname__}>>"
 
-                self.wfile.write(json.dumps(new_config, default=default).encode("utf-8"))
+                self.wfile.write(json.dumps(current_config, default=default).encode("utf-8"))
             elif stripped_path in ["/local/get_config"]:
-                # Update the values in the main class.  This is a hack to allow the server to reload the config file.
+                current_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
+
+                # Remove queues from the config as they are not serializable
+                def default(o):
+                    return f"<<non-serializable: {type(o).__qualname__}>>"
                 self.send_response(200)
                 self.end_headers()
-                new_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
-                # Remove queues from the config as they are not serializable
-
-                def default(o):
-                    return f"<<non-serializable: {type(o).__qualname__}>>"
-                self.wfile.write(json.dumps(new_config, default=default).encode("utf-8"))
+                self.wfile.write(json.dumps(current_config, default=default).encode("utf-8"))
             elif stripped_path in ["/api/ps"]:
                 server_ps = get_running_models(self, path, get_params, post_data_dict, backend_headers)
                 self.send_response(200)
