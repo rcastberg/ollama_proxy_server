@@ -19,18 +19,18 @@ requirements_dev = read_requirements("requirements_dev.txt")
 setuptools.setup(
     name="ollama_proxy_server",
     version="7.1.0",
-    author="Saifeddine ALOUI (ParisNeo)",
-    author_email="aloui.saifeddine@gmail.com",
+    author="Rene Castberg (rcastberg) & Saifeddine ALOUI (ParisNeo)",
+    author_email="Rene@castberg.org",
     description="A fastapi server for petals decentralized text generation",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/ParisNeo/ollama_proxy_server",
+    url="https://github.com/rcastberg/ollama_proxy_server",
     packages=setuptools.find_packages(),
     include_package_data=True,
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "ollama_proxy_server = ollama_proxy_server.main:main",
+            "ollama_proxy_server = ollama_proxy_server.main:main_loop",
             "ollama_proxy_add_user = ollama_proxy_server.add_user:main",
         ],
     },

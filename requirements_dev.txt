@@ -10,3 +10,4 @@ isort
 pytest
 python-dotenv
 pytest-dependency
+coverage
