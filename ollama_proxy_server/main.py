@@ -301,7 +301,7 @@ def add_access_log_entry(
         writer.writerow(row)
 
 
-def main():
+def main_loop():
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
     logger.info("Version: %s", get_version())
@@ -869,4 +869,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main_loop()
