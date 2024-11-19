@@ -360,7 +360,11 @@ def main_loop():
             except Exception as e:
                 logging.error(f"An unexpected error occurred: {e}")
             logger.debug('Eval_data content %s', str(eval_data))
-            return b"".join(eval_data), count
+            logger.debug("Curl string: %s", self.curl_string)
+            if eval_data is not None:
+                return b"".join(eval_data), count
+            else:
+                return eval_data, count
 
         def do_GET(self):
             self.log_request()
@@ -446,10 +450,12 @@ def main_loop():
             return None  # If all attempts failed
 
         def proxy(self):
+            self.curl_string = "curl $OLLAMA_HOST"
             self.user = "unknown"
             url = urlparse(self.path)
             logger.debug("URL: %s", url)
             path = url.path
+            self.curl_string += str(path)
             if path == "/":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
@@ -500,6 +506,8 @@ def main_loop():
                 return
             get_params = parse_qs(url.query) or {}
 
+            for i in self.headers:
+                self.curl_string += " -H \"" + str(i) + ": " + self.headers[i] + "\""
             client_ip, client_port = self.client_address
 
             # Prepare headers for the backend request
@@ -525,6 +533,7 @@ def main_loop():
                 except (json.JSONDecodeError, UnicodeDecodeError) as e:
                     logger.warning("Failed to decode POST data: %s", e)
                     post_data_dict = {}
+                self.curl_string += "-d \"" + post_data_str.replace("\"", "\'") + "\""
             else:
                 post_data = None
                 post_data_dict = {}
