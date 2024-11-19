@@ -359,6 +359,7 @@ def main_loop():
                 pass
             except Exception as e:
                 logging.error(f"An unexpected error occurred: {e}")
+            logger.debug('Eval_data content %s', str(eval_data))
             return b"".join(eval_data), count
 
         def do_GET(self):
