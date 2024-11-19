@@ -94,7 +94,7 @@ def get_authorized_users(filename, users_env=None):
 
 def check_sys_env(name, default=None):
     if name in os.environ:
-        logger.debug("Using environment variable %s", name)
+        logger.debug("Using environment variable %s, %s", name, os.environ[name])
         return os.environ[name]
     else:
         if default is not None:
