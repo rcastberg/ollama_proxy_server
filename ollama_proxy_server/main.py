@@ -407,6 +407,10 @@ def main_loop():
         def send_request_with_retries(
             self, server_info, path, get_params, post_data_dict, backend_headers
         ):
+            if "chat" in path:
+                force_stream = True
+            else:
+                force_stream = False
             for attempt in range(self.retry_attempts):
                 try:
                     # Send request to backend server with timeout
@@ -420,7 +424,7 @@ def main_loop():
                         server_info["url"] + path,
                         params=get_params,
                         json=post_data_dict if post_data_dict else None,
-                        stream=post_data_dict.get("stream", False),
+                        stream=post_data_dict.get("stream", force_stream),
                         headers=backend_headers,
                         timeout=server_info["timeout"],
                     )
@@ -789,7 +793,11 @@ def main_loop():
                         except KeyError:
                             import_Status[user] = False
                             continue
-                    if all(import_Status.values()):
+                    if post_data_dict == {}:
+                        self.send_response(400)
+                        self.end_headers()
+                        self.wfile.write(b"Invalid json data, Failed to add users")
+                    elif all(import_Status.values()):
                         self.send_response(200)
                         self.end_headers()
                         self.wfile.write(b"Users added, %s" % json.dumps(import_Status).encode('utf-8'))

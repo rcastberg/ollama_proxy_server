@@ -4,6 +4,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import time
 import unittest
 from pathlib import Path
@@ -70,15 +71,22 @@ class TestRestAPI(unittest.TestCase):
         logger.debug("Ollama Server is running")
         # Start the backend server
         logger.debug("Starting Proxy Server")
-        cls.backend_process = subprocess.Popen(
-            ["python3", "ollama_proxy_server/main.py"]
-        )
+        # NEW COMMAND: python -m coverage run -m sample.program
+        command = [sys.executable, '-m', 'coverage', 'run', '-m', 'ollama_proxy_server']
+
+        cls.backend_process = subprocess.Popen(command,                 # python -m coverage run -m sample.program
+                                               stdout=subprocess.PIPE,  # pipe to stdout
+                                               env=os.environ.copy()    # pass parent's environment
+                                               )
         logger.debug("Waiting for Proxy Server to start")
         # Wait for the server to start
         for i in range(20):
             time.sleep(2)
             url = f"http://{PROXY_SERVER}"
-            response = requests.get(url, timeout=TIMEOUT)
+            try:
+                response = requests.get(url, timeout=TIMEOUT)
+            except requests.exceptions.ConnectionError:
+                continue
             if response.status_code == 200:
                 logger.debug("Proxy Server is running")
                 return
