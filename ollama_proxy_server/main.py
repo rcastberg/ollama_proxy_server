@@ -310,9 +310,9 @@ def main_loop():
 
     class RequestHandler(BaseHTTPRequestHandler):
         # Class variables to access arguments and servers
-        retry_attempts = check_sys_env(
-            "OP_RETRY_ATTEMPTS", default=int(args.retry_attempts)
-        )  # Sys env has priority
+        retry_attempts = int(check_sys_env(
+            "OP_RETRY_ATTEMPTS", default=args.retry_attempts
+        ))  # Sys env has priority
         servers = get_config(
             args.config,
             config_string=check_sys_env("OP_SERVERS", "").replace(";", "\n"),
