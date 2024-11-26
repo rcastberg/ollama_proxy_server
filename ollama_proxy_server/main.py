@@ -317,7 +317,7 @@ def add_access_log_entry(
         writer.writerow(row)
 
 
-def main_loop2():
+def main_loop():
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
     logger.info("Version: %s", get_version())
@@ -350,38 +350,58 @@ def main_loop2():
                 return
             super().send_header(keyword, value)
 
-        def _send_response(self, response):
-            self.send_response(response.status_code)
-            for key, value in response.headers.items():
-                if key.lower() not in [
-                    "content-length",
-                    "transfer-encoding",
-                    "content-encoding",
-                ]:
-                    self.send_header(key, value)
-                    logger.debug('Sending Header: %s:%s', key, value)
-            self.send_header("Transfer-Encoding", "chunked")
-            self.end_headers()
+        def _send_response(self, response, stream=True):
+            if stream:
+                self.send_response(response.status_code)
+                for key, value in response.headers.items():
+                    if key.lower() not in [
+                        "content-length",
+                        "transfer-encoding",
+                        "content-encoding",
+                    ]:
+                        self.send_header(key, value)
+                        logger.debug('Sending Header: %s:%s', key, value)
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
 
-            chunks = [b"", b"", b""]
-            count = 0
-            eval_data = None
-            try:
-                for chunk in response.iter_content(chunk_size=1024):
-                    if chunk:
-                        count += 1
-                        self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
-                        self.wfile.flush()
-                        chunks = ring_buffer(chunks, chunk)
-                        if b"eval_count" in chunks[1]:
-                            eval_data = chunks
-                if not eval_data:
-                    eval_data = chunks
-                self.wfile.write(b"0\r\n\r\n")
-            except BrokenPipeError:
-                pass
-            except Exception as e:
-                logging.error(f"An unexpected error occurred: {e}")
+                chunks = [b"", b"", b""]
+                count = 0
+                eval_data = None
+                try:
+                    for chunk in response.iter_content(chunk_size=1024):
+                        if chunk:
+                            count += 1
+                            self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
+                            self.wfile.flush()
+                            chunks = ring_buffer(chunks, chunk)
+                            if b"eval_count" in chunks[1]:
+                                eval_data = chunks
+                    if not eval_data:
+                        eval_data = chunks
+                    self.wfile.write(b"0\r\n\r\n")
+                except BrokenPipeError:
+                    pass
+                except Exception as e:
+                    logging.error(f"An unexpected error occurred: {e}")
+            elif not stream:
+                content_length = len(response.content)
+                # No streaming
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain; charset=utf-8')
+                self.send_header('Content-Length', str(content_length))
+                self.end_headers()
+
+                try:
+                    self.wfile.write(response.content)
+                    self.wfile.flush()
+
+                    eval_data = response.content
+                    count = len(eval_data)
+                    eval_data = ''
+                except BrokenPipeError:
+                    pass
+                except Exception as e:
+                    logging.error(f"An unexpected error occurred: {e}")
             logger.debug('Eval_data content %s', str(eval_data))
             logger.debug("Curl string: %s", self.curl_string)
             if eval_data is not None:
@@ -908,68 +928,60 @@ def main_loop2():
         server.server_close()
 
 
-class ChunkedStreamingHandler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"  # Force HTTP/1.1 responses
+# class ChunkedStreamingHandler(BaseHTTPRequestHandler):
+#     protocol_version = "HTTP/1.1"  # Force HTTP/1.1 responses
 
-    def do_GET(self):
-        self.do_POST(self)
+#     def do_GET(self):
+#         self.do_POST(self)
 
-    def do_POST(self):
-        # Send response status and headers
-        if "stream" in self.path:  # Stream
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain; charset=utf-8')
-            self.send_header('Transfer-Encoding', 'chunked')  # Enables chunked transfer encoding
-            self.end_headers()
+#     def do_POST(self):
+#         # Send response status and headers
+#         if "stream" in self.path:  # Stream
+#             self.send_response(200)
+#             self.send_header('Content-type', 'text/plain; charset=utf-8')
+#             self.send_header('Transfer-Encoding', 'chunked')  # Enables chunked transfer encoding
+#             self.end_headers()
 
-            try:
-                # Send data in chunks
-                for i in range(1, 11):  # Stream 10 chunks
-                    chunk = f"Chunk {i}: The time is {time.ctime()}\n"
-                    self.wfile.write(f"{len(chunk):X}\r\n".encode())  # Send chunk size in hex
-                    self.wfile.write(chunk.encode())  # Send chunk data
-                    self.wfile.write(b"\r\n")  # End of chunk
-                    self.wfile.flush()
-                    time.sleep(1)  # Simulate delay between chunks
+#             try:
+#                 # Send data in chunks
+#                 for i in range(1, 11):  # Stream 10 chunks
+#                     chunk = f"Chunk {i}: The time is {time.ctime()}\n"
+#                     self.wfile.write(f"{len(chunk):X}\r\n".encode())  # Send chunk size in hex
+#                     self.wfile.write(chunk.encode())  # Send chunk data
+#                     self.wfile.write(b"\r\n")  # End of chunk
+#                     self.wfile.flush()
+#                     time.sleep(1)  # Simulate delay between chunks
 
-                # Send the last chunk (empty)
-                self.wfile.write(b"0\r\n\r\n")
-                self.wfile.flush()
-            except BrokenPipeError:
-                # Handle cases where the client disconnects
-                print("Client disconnected")
-            return
-        else:
-            # Send data in chunks
-            data_to_send = ""
-            for i in range(1, 11):  # Stream 10 chunks
-                chunk = f"Chunk {i}: The time is {time.ctime()}\n"
-                data_to_send += chunk
-                time.sleep(1)  # Simulate delay between chunks
+#                 # Send the last chunk (empty)
+#                 self.wfile.write(b"0\r\n\r\n")
+#                 self.wfile.flush()
+#             except BrokenPipeError:
+#                 # Handle cases where the client disconnects
+#                 print("Client disconnected")
+#             return
+#         else:
+#             # Send data in chunks
+#             data_to_send = ""
+#             for i in range(1, 11):  # Stream 10 chunks
+#                 chunk = f"Chunk {i}: The time is {time.ctime()}\n"
+#                 data_to_send += chunk
+#                 time.sleep(1)  # Simulate delay between chunks
 
-            content_length = len(data_to_send)
-            # No streaming
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain; charset=utf-8')
-            self.send_header('Content-Length', str(content_length))
-            self.end_headers()
+#             content_length = len(data_to_send)
+#             # No streaming
+#             self.send_response(200)
+#             self.send_header('Content-type', 'text/plain; charset=utf-8')
+#             self.send_header('Content-Length', str(content_length))
+#             self.end_headers()
 
-            try:
-                self.wfile.write(data_to_send.encode())
-                self.wfile.flush()
+#             try:
+#                 self.wfile.write(data_to_send.encode())
+#                 self.wfile.flush()
 
-            except BrokenPipeError:
-                # Handle cases where the client disconnects
-                print("Client disconnected")
-            return
-
-
-def main_loop():
-    port = 8000
-    server = HTTPServer(('0.0.0.0', port), ChunkedStreamingHandler)
-    print(f"Server started on http://0.0.0.0:{port}")
-    server.serve_forever()
-
+#             except BrokenPipeError:
+#                 # Handle cases where the client disconnects
+#                 print("Client disconnected")
+#             return
 
 if __name__ == "__main__":
     main_loop()
