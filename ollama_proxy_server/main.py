@@ -966,7 +966,7 @@ class ChunkedStreamingHandler(BaseHTTPRequestHandler):
 
 def main_loop():
     port = 8000
-    server = HTTPServer(('localhost', port), ChunkedStreamingHandler)
+    server = HTTPServer(('0.0.0.0', port), ChunkedStreamingHandler)
     print(f"Server started on http://0.0.0.0:{port}")
     server.serve_forever()
 
