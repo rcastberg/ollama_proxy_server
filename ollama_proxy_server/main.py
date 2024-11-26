@@ -908,5 +908,40 @@ def main_loop():
         server.server_close()
 
 
+class ChunkedStreamingHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        # Send response status and headers
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.send_header('Transfer-Encoding', 'chunked')  # Enables chunked transfer encoding
+        self.end_headers()
+
+        try:
+            # Send data in chunks
+            for i in range(1, 11):  # Stream 10 chunks
+                chunk = f"Chunk {i}: The time is {time.ctime()}\n"
+                self.wfile.write(f"{len(chunk):X}\r\n".encode())  # Send chunk size in hex
+                self.wfile.write(chunk.encode())  # Send chunk data
+                self.wfile.write(b"\r\n")  # End of chunk
+                self.wfile.flush()
+                time.sleep(1)  # Simulate delay between chunks
+
+            # Send the last chunk (empty)
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except BrokenPipeError:
+            # Handle cases where the client disconnects
+            print("Client disconnected")
+        return
+
+
+def run_server():
+    port = 8000
+    server = HTTPServer(('localhost', port), ChunkedStreamingHandler)
+    print(f"Server started on http://localhost:{port}")
+    server.serve_forever()
+
+
 if __name__ == "__main__":
-    main_loop()
+    # main_loop()
+    run_server()
