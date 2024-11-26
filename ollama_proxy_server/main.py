@@ -911,6 +911,9 @@ def main_loop2():
 class ChunkedStreamingHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"  # Force HTTP/1.1 responses
 
+    def do_GET(self):
+        self.do_POST(self)
+
     def do_POST(self):
         # Send response status and headers
         if "stream" in self.path:  # Stream
@@ -964,7 +967,7 @@ class ChunkedStreamingHandler(BaseHTTPRequestHandler):
 def main_loop():
     port = 8000
     server = HTTPServer(('localhost', port), ChunkedStreamingHandler)
-    print(f"Server started on http://localhost:{port}")
+    print(f"Server started on http://0.0.0.0:{port}")
     server.serve_forever()
 
 
