@@ -317,7 +317,7 @@ def add_access_log_entry(
         writer.writerow(row)
 
 
-def main_loop():
+def main_loop2():
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
     logger.info("Version: %s", get_version())
@@ -961,7 +961,7 @@ class ChunkedStreamingHandler(BaseHTTPRequestHandler):
             return
 
 
-def run_server():
+def main_loop():
     port = 8000
     server = HTTPServer(('localhost', port), ChunkedStreamingHandler)
     print(f"Server started on http://localhost:{port}")
@@ -969,5 +969,4 @@ def run_server():
 
 
 if __name__ == "__main__":
-    # main_loop()
-    run_server()
+    main_loop()
