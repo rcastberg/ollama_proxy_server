@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from queue import Queue
@@ -42,6 +43,7 @@ def get_config(filename, config_string=None, default_timeout=300):
         server_info = {
             "url": config[name]["url"],
             "queue": Queue(),
+            "queue_size": int(config[name].get("queue_size", 1)),
             "models": [model.strip() for model in config[name]["models"].split(",")],
             "timeout": timeout,
         }
@@ -232,6 +234,20 @@ def get_available_models(class_object, path, get_params, post_data_dict, backend
     return model_info
 
 
+def get_best_server(available_servers):
+    chosen_server = None
+    queue_size = 999
+    while chosen_server is None:
+        for server in available_servers:
+            if (server[1]['queue_size'] - server[1]["queue"].qsize() > 0) & (server[1]["queue"].qsize() < queue_size):
+                # Find a server with shorter queue than the previous and with capacity.
+                chosen_server = server
+                queue_size = server[1]["queue"].qsize()
+        if chosen_server is None:
+            time.sleep(0.01)
+    return chosen_server
+
+
 def ring_buffer(data, new_data):
     data.pop(0)
     data.append(new_data)
@@ -328,6 +344,12 @@ def main_loop():
             f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, deactivate_security={deactivate_security}, log_path={log_path}"
         )
 
+        def send_header(self, keyword, value):
+            # Remove duplicate data in headers
+            if keyword.lower() == 'date' and b'Date' in b''.join(self._headers_buffer):
+                return
+            super().send_header(keyword, value)
+
         def _send_response(self, response):
             self.send_response(response.status_code)
             for key, value in response.headers.items():
@@ -337,6 +359,7 @@ def main_loop():
                     "content-encoding",
                 ]:
                     self.send_header(key, value)
+                    logger.debug('Sending Header: %s:%s', key, value)
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
 
@@ -412,10 +435,6 @@ def main_loop():
         def send_request_with_retries(
             self, server_info, path, get_params, post_data_dict, backend_headers
         ):
-            if "chat" in path:
-                force_stream = True
-            else:
-                force_stream = False
             for attempt in range(self.retry_attempts):
                 try:
                     # Send request to backend server with timeout
@@ -429,7 +448,7 @@ def main_loop():
                         server_info["url"] + path,
                         params=get_params,
                         json=post_data_dict if post_data_dict else None,
-                        stream=post_data_dict.get("stream", force_stream),
+                        stream=post_data_dict.get("stream", False),
                         headers=backend_headers,
                         timeout=server_info["timeout"],
                     )
@@ -577,6 +596,7 @@ def main_loop():
                     server for server in self.servers if model in server[1]["models"]
                 ]
 
+                # Wait for server queue to fall below threshold.
                 if not available_servers:
                     # No server supports the requested model
                     logger.info("No servers support model '%s'", model)
@@ -595,10 +615,8 @@ def main_loop():
                 response = None
 
                 while available_servers:
-                    # Find the server with the lowest queue size among available_servers
-                    min_queued_server = min(
-                        available_servers, key=lambda s: s[1]["queue"].qsize()
-                    )
+                    # Find the server with the lowest queue size among available_servers, divide by the queue size to prioritize more powerful server
+                    min_queued_server = get_best_server(available_servers)
 
                     if not self.is_server_available(min_queued_server[1]):
                         logger.info("Server %s is not available.", min_queued_server[0])
@@ -676,6 +694,10 @@ def main_loop():
                                     info = json.loads(last_chunk.split(b"\n")[-2])
                                 except IndexError:
                                     info = json.loads(response.content)
+                                except AttributeError:
+                                    # Request was canceled? FIX
+                                    info = ""
+                                    logger.warning("Request was possibly canceled, not counting")
                                 try:
                                     input_tokens = info["prompt_eval_count"]
                                     output_tokens = info["eval_count"]
