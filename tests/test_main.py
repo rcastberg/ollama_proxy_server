@@ -140,12 +140,39 @@ class TestRestAPI(unittest.TestCase):
 
         # Check if the request was successful
         self.assertEqual(response.status_code, 200)
+        self.assertNotIn('Transfer-Encoding', response.headers)
+        self.assertIn("Content-Length", response.headers)
 
         # Check if the response contains the expected data structure
         # Adjust the expected structure based on your actual response
         self.assertIn("response", response.json())
         self.assertIsInstance(response.json()["response"], str)
         self.assertGreater(len(response.json()["response"]), 10)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_02_generate_ollama_generate_default_steam(self):
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "model": "tinyllama:latest",
+            "prompt": "Why is the sky blue?",
+        }
+
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+
+        # Check if the request was successful
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Transfer-Encoding'], 'chunked')
+        self.assertNotIn("Content-Length", response.headers)
+
+        # Check if the response contains the expected data structure
+        # Adjust the expected structure based on your actual response
+        self.assertIn(b"response", response.content)
+        self.assertIsInstance(response.content.split(b"\n")[-2], bytes)
+        self.assertGreater(len(response.content.split(b"\n")), 10)
 
     @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
     def test_03_ollama_generate_stream(self):
@@ -164,12 +191,86 @@ class TestRestAPI(unittest.TestCase):
 
         # Check if the request was successful
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Transfer-Encoding'], 'chunked')
+        self.assertNotIn("Content-Length", response.headers)
 
         # Check if the response contains the expected data structure
         # Adjust the expected structure based on your actual response
         self.assertIn(b"response", response.content)
         self.assertIsInstance(response.content.split(b"\n")[-2], bytes)
         self.assertGreater(len(response.content.split(b"\n")), 10)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_02_generate_ollama_chat(self):
+        url = f"http://{PROXY_SERVER}/api/chat"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "model": "tinyllama:latest",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "why is the sky blue?"
+                }
+            ],
+            "stream": False
+        }
+
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+
+        # Check if the request was successful
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('Transfer-Encoding', response.headers)
+        self.assertIn("Content-Length", response.headers)
+
+        # Check if the response contains the expected data structure
+        # Adjust the expected structure based on your actual response
+        self.assertIn("message", response.json())
+        self.assertIn('role', response.json()['message'])
+        self.assertIn('content', response.json()['message'])
+        self.assertEqual(response.json()['message']['role'], 'assistant')
+
+        self.assertIsInstance(response.json()['message']["content"], str)
+        self.assertGreater(len(response.json()['message']["content"]), 10)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_03_ollama_chat_stream(self):
+        url = f"http://{PROXY_SERVER}/api/chat"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "model": "tinyllama:latest",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "why is the sky blue?"
+                }
+            ],
+            "stream": True
+        }
+
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+
+        # Check if the request was successful
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Transfer-Encoding'], 'chunked')
+        self.assertNotIn("Content-Length", response.headers)
+
+        # Check if the response contains the expected data structure
+        # Adjust the expected structure based on your actual response
+        self.assertIn(b"message", response.content)
+        message = json.loads(response.content.split(b"\n")[2])
+
+        self.assertIn('role', message['message'])
+        self.assertIn('content', message['message'])
+        self.assertEqual(message['message']['role'], 'assistant')
+
+        self.assertIsInstance(message['message']["content"], str)
+        self.assertGreater(len(message['message']["content"]), 1)
 
     @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
     def test_04_openai_generate(self):

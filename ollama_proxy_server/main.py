@@ -397,9 +397,9 @@ def main_loop():
 
                     eval_data = response.content
                     count = len(eval_data)
-                    eval_data = ''
                 except BrokenPipeError:
-                    pass
+                    eval_data = response.content
+                    count = len(eval_data)
                 except Exception as e:
                     logging.error(f"An unexpected error occurred: {e}")
             logger.debug('Eval_data content %s', str(eval_data))
@@ -468,7 +468,7 @@ def main_loop():
                         server_info["url"] + path,
                         params=get_params,
                         json=post_data_dict if post_data_dict else None,
-                        stream=post_data_dict.get("stream", False),
+                        stream=post_data_dict.get("stream", True),  # Content is set to streaming unless user specifically asks.
                         headers=backend_headers,
                         timeout=server_info["timeout"],
                     )
@@ -578,6 +578,7 @@ def main_loop():
                 post_data_dict = {}
 
             stripped_path = re.sub("/$", "", path)
+            streamed_request = post_data_dict.get("stream", True)
 
             # Endpoints that require model-based routing
             model_based_endpoints = [
@@ -683,7 +684,7 @@ def main_loop():
                             backend_headers,
                         )
                         if response:
-                            last_chunk, count = self._send_response(response)
+                            last_chunk, count = self._send_response(response, stream=streamed_request)
                             if "/v1/" in stripped_path:  # ChatGPT
                                 # add stuff
                                 try:
@@ -908,7 +909,7 @@ def main_loop():
                     default_server[1], path, get_params, post_data_dict, backend_headers
                 )
                 if response:
-                    self._send_response(response)
+                    self._send_response(response, stream=streamed_request)
                 else:
                     self.send_response(503)
                     self.end_headers()
