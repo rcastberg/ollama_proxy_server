@@ -372,7 +372,6 @@ def main_loop():
                 try:
                     for chunk in response.iter_content(chunk_size=1024):
                         if chunk:
-                            logger.debug("Chunk %d:%s", count, chunk)
                             count += 1
                             self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
                             self.wfile.flush()
@@ -931,67 +930,6 @@ def main_loop():
         logger.info("Shutting down the server.")
         server.server_close()
 
-
-# class ChunkedStreamingHandler(BaseHTTPRequestHandler):
-#     protocol_version = "HTTP/1.1"  # Force HTTP/1.1 responses
-
-#     def do_GET(self):
-#         self.do_POST(self)
-
-#     def do_POST(self):
-#         # Send response status                               and headers
-#         if "stream" in self.path:  # Stream
-#             self.send_response(200)
-#             self.send_header('Content-type', 'text/plain; charset=utf-8')
-#             self.send_header('Transfer-Encoding', 'chunked')  # Enables chunked transfer encoding
-#             self.end_headers()
-
-#             try:
-#                 # Send data in chunks
-#                 for i in range(1, 11):  # Stream 10 chunks
-#                     chunk = f"Chunk {i}: The time is {time.ctime()}\n"
-#                     self.wfile.write(f"{len(chunk):X}\r\n".encode())  # Send chunk size in hex
-#                     self.wfile.write(chunk.encode())  # Send chunk data
-#                     self.wfile.write(b"\r\n")  # End of chunk
-#                     self.wfile.flush()
-#                     time.sleep(1)  # Simulate delay between chunks
-
-#                 # Send the last chunk (empty)
-#                 self.wfile.write(b"0\r\n\r\n")
-#                 self.wfile.flush()
-#             except BrokenPipeError:
-#                 # Handle cases where the client disconnects
-#                 print("Client disconnected")
-#             return
-#         else:
-#             # Send data in chunks
-#             data_to_send = ""
-#             for i in range(1, 11):  # Stream 10 chunks
-#                 chunk = f"Chunk {i}: The time is {time.ctime()}\n"
-#                 data_to_send += chunk
-#                 time.sleep(1)  # Simulate delay between chunks
-
-#             content_length = len(data_to_send)
-#             # No streaming
-#             self.send_response(200)
-#             self.send_header('Content-type', 'text/plain; charset=utf-8')
-#             self.send_header('Content-Length', str(content_length))
-#             self.end_headers()
-
-#             try:
-#                 self.wfile.write(data_to_send.encode())
-#                 self.wfile.flush()
-
-#             except BrokenPipeError:
-#                 # Handle cases where the client disconnects
-#                 print("Client disconnected")
-#             return
-
-# def main_loop():
-#     port = 8000
-#     server = HTTPServer(('0.0.0.0', port), ChunkedStreamingHandler)
-#     print(f"Server started on http://0.0.0.0:{port}")
-#     server.serve_forever()
 
 if __name__ == "__main__":
     main_loop()
