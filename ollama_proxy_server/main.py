@@ -372,7 +372,8 @@ def main_loop():
                         if chunk:
                             logger.debug("Chunk %d:%s", count, chunk)
                             count += 1
-                            self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
+                            # self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
+                            self.wfile.write(b"%s\r\n" % chunk)
                             self.wfile.flush()
                             chunks = ring_buffer(chunks, chunk)
                             if b"eval_count" in chunks[1]:
