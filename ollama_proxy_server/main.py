@@ -325,6 +325,8 @@ def main_loop():
     logger.debug("Default Arguments: %s", args)
 
     class RequestHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"  # Force HTTP/1.1 responses
+
         # Class variables to access arguments and servers
         retry_attempts = int(check_sys_env(
             "OP_RETRY_ATTEMPTS", default=args.retry_attempts
@@ -372,8 +374,7 @@ def main_loop():
                         if chunk:
                             logger.debug("Chunk %d:%s", count, chunk)
                             count += 1
-                            # self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
-                            self.wfile.write(b"%s\r\n" % chunk)
+                            self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
                             self.wfile.flush()
                             chunks = ring_buffer(chunks, chunk)
                             if b"eval_count" in chunks[1]:
