@@ -370,6 +370,7 @@ def main_loop():
                 try:
                     for chunk in response.iter_content(chunk_size=1024):
                         if chunk:
+                            logger.debug("Chunk %d:%s", count, chunk)
                             count += 1
                             self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
                             self.wfile.flush()
@@ -936,7 +937,7 @@ def main_loop():
 #         self.do_POST(self)
 
 #     def do_POST(self):
-#         # Send response status and headers
+#         # Send response status                               and headers
 #         if "stream" in self.path:  # Stream
 #             self.send_response(200)
 #             self.send_header('Content-type', 'text/plain; charset=utf-8')
@@ -983,6 +984,12 @@ def main_loop():
 #                 # Handle cases where the client disconnects
 #                 print("Client disconnected")
 #             return
+
+# def main_loop():
+#     port = 8000
+#     server = HTTPServer(('0.0.0.0', port), ChunkedStreamingHandler)
+#     print(f"Server started on http://0.0.0.0:{port}")
+#     server.serve_forever()
 
 if __name__ == "__main__":
     main_loop()
