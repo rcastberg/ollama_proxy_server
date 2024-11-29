@@ -766,10 +766,12 @@ def main_loop():
                     self.wfile.write(b"No available servers could handle the request.")
             elif stripped_path in ["/api/tags", "/v1/models"]:
                 model_info = get_available_models(self, path, get_params, post_data_dict, backend_headers)
+                model_info = json.dumps(model_info).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(model_info)))
                 self.end_headers()
-                self.wfile.write(json.dumps(model_info).encode("utf-8"))
+                self.wfile.write(model_info)
             elif stripped_path in ["/api/pull", "/api/delete", "/api/push",
                                    "/api/copy", "/api/create"]:
                 self.send_response(503)
