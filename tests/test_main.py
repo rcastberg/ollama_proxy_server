@@ -24,7 +24,7 @@ OLLMA_MODEL = os.getenv("OLLAMA_TEST_MODEL")
 PROXY_SERVER = os.getenv("PROXY_SERVER")
 PROXY_API_KEY = os.getenv("PROXY_API_KEY")
 PROXY_PORT = os.getenv("OP_PORT")
-AUTH_USER = ':'.join(os.getenv("OP_AUTHORIZED_USERS").split(':')[0:2])
+AUTH_USER = ':'.join(os.getenv("OP_AUTHORIZED_USERS").split(';')[0:2])
 
 
 def isdebugging():
@@ -405,6 +405,47 @@ class TestRestAPI(unittest.TestCase):
 
         self.assertIn("servers", response.json())
         self.assertIn("DefaultServer", response.json()['servers'][0])
+
+    def test_11_add_bulk_user(self):
+        url = f"http://{PROXY_SERVER}/local/add_bulk_users"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+
+        data = [{
+                'user': 'test_user2',
+                'key': 'abcdefghijk',
+                'role': 'user',
+                'models': 'tinyllama:latest,test2:test'
+                }]
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content.decode('utf-8').split(',')[1].strip())['test_user2'], True)
+
+        url = f"http://{PROXY_SERVER}/local/get_config"
+        headers = {
+            "Authorization": "Bearer test_user2:abcdefghijk",
+            "Content-Type": "application/json",
+        }
+
+        response = requests.post(url, headers=headers, timeout=TIMEOUT)
+
+        self.assertEqual(response.status_code, 200)
+
+        self.assertIn("servers", response.json())
+        self.assertIn("DefaultServer", response.json()['servers'][0])
+
+        url = f"http://{PROXY_SERVER}/local/delete_user"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+
+        data = {'user': 'test_user2'}
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'User deleted', response.content)
 
 
 if __name__ == "__main__":

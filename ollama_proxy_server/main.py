@@ -61,7 +61,7 @@ def read_users_from_lines(lines, location):
         if line.strip() == "":
             continue
         try:
-            user, key, role, models = line.strip().split(":")
+            user, key, role, models = line.strip().split(";")
             authorized_users[user] = {"key": key, "role": role, "models": models.split(",")}
         except Exception as e:
             logger.debug("User entry broken, Exception: %s", e)
@@ -80,7 +80,7 @@ def get_authorized_users(filename, users_env=None):
         file_lines = []
     authorized_users_file = read_users_from_lines(file_lines, filename)
     if users_env:
-        lines = users_env.replace(";", "\n").split("\n")
+        lines = users_env.split("\n")
         authorized_users_env = read_users_from_lines(lines, 'Env')
     else:
         authorized_users_env = {}
@@ -384,12 +384,12 @@ def main_loop():
                 except BrokenPipeError:
                     pass
                 except Exception as e:
-                    logging.error(f"An unexpected error occurred: {e}")
+                    logging.error("An unexpected error occurred: %s", {e})
             elif not stream:
                 content_length = len(response.content)
                 # No streaming
                 self.send_response(200)
-                self.send_header('Content-type', 'text/plain; charset=utf-8')
+                self.send_header('Content-type', 'application/json; charset=utf-8')
                 self.send_header('Content-Length', str(content_length))
                 self.end_headers()
 
@@ -410,6 +410,13 @@ def main_loop():
                 return b"".join(eval_data), count
             else:
                 return eval_data, count
+
+        def send_simple_response(self, content, code=200, response_type="application/json"):
+            self.send_response(code)
+            self.send_header("Content-Type", response_type)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
 
         def do_GET(self):
             self.log_request()
@@ -498,16 +505,10 @@ def main_loop():
             path = url.path
             self.curl_string += str(path)
             if path == "/":
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(b"Ollama is running")
+                self.send_simple_response(b"Ollama is running")
                 return
             if path == "/health":
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(b"OK")
+                self.send_simple_response(b"OK")
                 return
             if not self.deactivate_security and not self._validate_user_and_key():
                 logger.warning("User is not authorized")
@@ -541,9 +542,7 @@ def main_loop():
                         error="Authentication failed",
                     )
                     logger.debug("User authentication token not accepted")
-                self.send_response(403)
-                self.end_headers()
-                self.wfile.write(b"No or Invalid authentication token provided")
+                self.send_simple_response(b"No or Invalid authentication token provided", 403)
                 return
             get_params = parse_qs(url.query) or {}
 
@@ -580,7 +579,11 @@ def main_loop():
                 post_data_dict = {}
 
             stripped_path = re.sub("/$", "", path)
-            streamed_request = post_data_dict.get("stream", True)
+            try:
+                streamed_request = post_data_dict.get("stream", True)
+            except AttributeError:
+                # If the request is not a dictionary, it is not a streamed request
+                streamed_request = False
 
             # Endpoints that require model-based routing
             model_based_endpoints = [
@@ -602,16 +605,12 @@ def main_loop():
 
                 if not model:
                     # Model is required for these endpoints
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(b"Missing 'model' in request")
+                    self.send_simple_response(b"Missing 'model' in request", 400, "text/plain")
                     logger.info("Missing 'model' in request")
                     return
                 if model not in self.models and '*' not in self.models:
                     # User is not authorized to use the requested model
-                    self.send_response(403)
-                    self.end_headers()
-                    self.wfile.write(b"User is not authorized to use the requested model")
+                    self.send_simple_response(b"User is not authorized to use the requested model", 403, "text/plain")
                     logger.info("User is not authorized to use the requested model")
                     return
                 # Filter servers that support the requested model
@@ -622,10 +621,8 @@ def main_loop():
                 # Wait for server queue to fall below threshold.
                 if not available_servers:
                     # No server supports the requested model
+                    self.send_simple_response(b"No servers support the requested model.", 503, "text/plain")
                     logger.info("No servers support model '%s'", model)
-                    self.send_response(503)
-                    self.end_headers()
-                    self.wfile.write(b"No servers support the requested model.")
                     return
                 else:
                     logger.debug(
@@ -669,9 +666,7 @@ def main_loop():
                             nb_queued_requests_on_server=que.qsize(),
                             error="Queue is full",
                         )
-                        self.send_response(503)
-                        self.end_headers()
-                        self.wfile.write(b"Server is busy. Please try again later.")
+                        self.send_simple_response(b"Server is busy. Please try again later.", 503, "text/plain")
                         return
                     # Prepare to store input and output tokens
                     input_tokens = 0
@@ -761,46 +756,33 @@ def main_loop():
                             logger.debug("Write to log, Exception: %s", e)
                 if not response:
                     # No server could handle the request
-                    self.send_response(503)
-                    self.end_headers()
-                    self.wfile.write(b"No available servers could handle the request.")
+                    self.send_simple_response(b"No available servers could handle the request.", 503, "text/plain")
             elif stripped_path in ["/api/tags", "/v1/models"]:
                 model_info = get_available_models(self, path, get_params, post_data_dict, backend_headers)
                 model_info = json.dumps(model_info).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(model_info)))
-                self.end_headers()
-                self.wfile.write(model_info)
+                self.send_simple_response(model_info)
             elif stripped_path in ["/api/pull", "/api/delete", "/api/push",
                                    "/api/copy", "/api/create"]:
-                self.send_response(503)
-                self.end_headers()
-                self.wfile.write(b"Unsupported in proxy.")
+                self.send_simple_response("Unsupported in proxy", 503)
             elif stripped_path in ["/local/delete_user"]:
                 if self.role == "admin":
                     try:
                         user = post_data_dict["user"]
                     except KeyError:
-                        self.send_response(400)
-                        self.end_headers()
-                        self.wfile.write(b"Missing required fields in request")
+                        self.send_simple_response(b"Missing required fields in request", 400, "text/plain")
                         return
                     if user in self.authorized_users:
                         del self.authorized_users[user]
-                        self.send_response(200)
-                        self.end_headers()
-                        self.wfile.write(b"User deleted")
+
                         # Write the new user to the authorized users file
                         with open(args.users_list, "w", encoding="utf8") as f:
                             for user, data in self.authorized_users.items():
                                 f.write(
                                     f"{user}:{data['key']}:{data['role']}:{','.join(data['models'])}\n"
                                 )
+                        self.send_simple_response(b"User deleted", 200, "text/plain")
                     else:
-                        self.send_response(400)
-                        self.end_headers()
-                        self.wfile.write(b"User does not exist")
+                        self.send_simple_response(b"User does not exist", 400, "text/plain")
 
             elif stripped_path in ["/local/add_user"]:
                 # Check the role of the user:
@@ -811,30 +793,22 @@ def main_loop():
                         key = post_data_dict["key"]
                         models = post_data_dict["models"]
                     except KeyError:
-                        self.send_response(400)
-                        self.end_headers()
-                        self.wfile.write(b"Missing required fields in request")
+                        self.send_simple_response(b"Missing required fields in request", 400, "text/plain")
                         return
                     if user in self.authorized_users:
-                        self.send_response(400)
-                        self.end_headers()
-                        self.wfile.write(b"User already exists, updating")
+                        self.send_simple_response(b"User already exists, updating", 400, "text/plain")
                         return
 
                     self.authorized_users[user] = {"key": key, "role": role, "models": models}
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b"User added")
+                    self.send_simple_response(b"User added", 200, "text/plain")
                     # Write the new user to the authorized users file
                     with open(args.users_list, "w", encoding="utf8") as f:
                         for user, data in self.authorized_users.items():
                             f.write(
-                                f"{user}:{data['key']}:{data['role']}:{','.join(data['models'])}\n"
+                                f"{user};{data['key']};{data['role']};{','.join(data['models'])}\n"
                             )
                 else:
-                    self.send_response(403)
-                    self.end_headers()
-                    self.wfile.write(b"Unauthorized, %s, user not admin", self.user)
+                    self.send_simple_response(b"Unauthorized, %s, user not admin" % self.user, 403)
             elif stripped_path in ["/local/add_bulk_users"]:
                 # Check the role of the user:
                 import_Status = {}
@@ -844,70 +818,56 @@ def main_loop():
                             user = user_info["user"]
                             role = user_info["role"]
                             key = user_info["key"]
-                            models = user_info["models"]
+                            models = user_info["models"].split(',')
                             import_Status[user] = True
                             self.authorized_users[user] = {"key": key, "role": role, "models": models}
                         except KeyError:
                             import_Status[user] = False
                             continue
                     if post_data_dict == {}:
-                        self.send_response(400)
-                        self.end_headers()
-                        self.wfile.write(b"Invalid json data, Failed to add users")
+                        self.send_simple_response(b"Invalid json data, Failed to add users", 400, "text/plain")
                     elif all(import_Status.values()):
-                        self.send_response(200)
-                        self.end_headers()
-                        self.wfile.write(b"Users added, %s" % json.dumps(import_Status).encode('utf-8'))
+                        self.send_simple_response(b"Users added, %s" % json.dumps(import_Status).encode('utf-8'), 200, "text/plain")
                     else:
-                        self.send_response(400)
-                        self.end_headers()
-                        self.wfile.write(b"Failed to add users, %s" % json.dumps(import_Status).encode('utf-8'))
+                        self.send_simple_response(b"Failed to add users, %s" % json.dumps(import_Status).encode('utf-8'), 400, "text/plain")
                     # Write the new user to the authorized users file
                     with open(args.users_list, "w", encoding="utf8") as f:
                         for user, data in self.authorized_users.items():
                             f.write(
-                                f"{user}:{data['key']}:{data['role']}:{','.join(data['models'])}\n"
+                                f"{user};{data['key']};{data['role']};{','.join(data['models'])}\n"
                             )
                 else:
-                    self.send_response(403)
-                    self.end_headers()
-                    self.wfile.write(b"Unauthorized, %s, user not admin", self.user)
+                    response_data = "Unauthorized, %s, user not admin" % self.user
+                    self.send_simple_response(response_data.encode('utf-8'), 403)
             elif stripped_path in ["/local/reload_config"]:
                 # Update the values in the main class.  This is a hack to allow the server to reload the config file.
                 RequestHandler.servers = get_config(args.config, config_string=check_sys_env("OP_SERVERS", "").replace(";", "\n"))
                 RequestHandler.authorized_users = get_authorized_users(args.users_list, check_sys_env("OP_AUTHORIZED_USERS"))
-                self.send_response(200)
-                self.end_headers()
                 current_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
 
                 # Remove queues from the config as they are not serializable
                 def default(o):
                     return f"<<non-serializable: {type(o).__qualname__}>>"
-
-                self.wfile.write(json.dumps(current_config, default=default).encode("utf-8"))
+                current_config = json.dumps(current_config, default=default).encode("utf-8")
+                self.send_simple_response(current_config)
             elif stripped_path in ["/local/get_config"]:
                 current_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
 
                 # Remove queues from the config as they are not serializable
                 def default(o):
                     return f"<<non-serializable: {type(o).__qualname__}>>"
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(json.dumps(current_config, default=default).encode("utf-8"))
+                current_config = json.dumps(current_config, default=default).encode("utf-8")
+                self.send_simple_response(current_config)
             elif stripped_path in ["/api/ps"]:
                 server_ps = get_running_models(self, path, get_params, post_data_dict, backend_headers)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(server_ps).encode("utf-8"))
+                server_ps = json.dumps(server_ps).encode("utf-8")
+                self.send_simple_response(server_ps)
             else:
                 logger.warning("Not recognized path, running : %s", stripped_path)
                 # For other endpoints, mirror the request to the default server with retries
                 default_server = self.servers[0]
                 if not self.is_server_available(default_server[1]):
-                    self.send_response(503)
-                    self.end_headers()
-                    self.wfile.write(b"Default server is not available.")
+                    self.send_simple_response(b"Default server is not available.", 503, "text/plain")
                     return
                 response = self.send_request_with_retries(
                     default_server[1], path, get_params, post_data_dict, backend_headers
@@ -915,9 +875,7 @@ def main_loop():
                 if response:
                     self._send_response(response, stream=streamed_request)
                 else:
-                    self.send_response(503)
-                    self.end_headers()
-                    self.wfile.write(b"Failed to forward request to default server.")
+                    self.send_simple_response(b"Failed to forward request to default server.", 503, "text/plain")
 
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True  # Gracefully handle shutdown
