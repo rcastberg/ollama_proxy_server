@@ -122,17 +122,17 @@ def get_version():
     return f"Version:{version}, Git-Hash:{hash}"
 
 
-def parse_args():
+def parse_args(home_folder=""):
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", default="config.ini", help="Path to the config file"
+        "--config", default=home_folder + "config.ini", help="Path to the config file"
     )
     parser.add_argument(
-        "--log_path", default="access_log.txt", help="Path to the access log file"
+        "--log_path", default=home_folder + "access_log.txt", help="Path to the access log file"
     )
     parser.add_argument(
         "--users_list",
-        default="authorized_users.txt",
+        default=home_folder + "authorized_users.txt",
         help="Path to the authorized users list",
     )
     parser.add_argument(
@@ -321,6 +321,8 @@ def main_loop():
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
     logger.info("Version: %s", get_version())
+    home_folder = check_sys_env("OP_HOME", default="")
+    logger.info("Home folder: %s", home_folder)
     args = parse_args()
     logger.debug("Default Arguments: %s", args)
 
