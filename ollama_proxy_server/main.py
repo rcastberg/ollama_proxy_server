@@ -408,7 +408,9 @@ def main_loop():
                     logging.error(f"An unexpected error occurred: {e}")
             logger.debug('Eval_data content %s', str(eval_data))
             logger.debug("Curl string: %s", self.curl_string)
-            if eval_data is not None:
+            if eval_data is int:
+                return eval_data, count
+            elif eval_data is not None:
                 return b"".join(eval_data), count
             else:
                 return eval_data, count
