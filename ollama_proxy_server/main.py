@@ -106,20 +106,20 @@ def check_sys_env(name, default=None):
 
 def get_version():
     try:
-        with open("GIT_VERSION_TAG.txt", "r") as f:
+        with open("GIT_VERSION_TAG.txt", "r", encoding="utf-8") as f:
             version = f.read().strip()
     except FileNotFoundError:
         version = "unknown"
     try:
-        with open("GIT_VERSION_HASH.txt", "r") as f:
-            hash = f.read().strip()
+        with open("GIT_VERSION_HASH.txt", "r", encoding="utf-8") as f:
+            git_hash = f.read().strip()
     except FileNotFoundError:
         try:
-            hash = os.popen('git rev-parse --verify HEAD').read().strip()
+            git_hash = os.popen('git rev-parse --verify HEAD').read().strip()
         except Exception as e:
             logger.debug("Exception: %s", e)
-            hash = "unknown"
-    return f"Version:{version}, Git-Hash:{hash}"
+            git_hash = "unknown"
+    return f"Version:{version}, Git-Hash:{git_hash}"
 
 
 def parse_args(home_folder=""):
@@ -317,6 +317,36 @@ def add_access_log_entry(
         writer.writerow(row)
 
 
+def get_streamed_token_count(chunks, chatgpt=False, count=0):
+    # Check if chatgpt api
+    if type(chunks) is list:
+        chunks = b','.join(chunks)
+    if chatgpt:
+        # Use regex as eval_count is not always in a valid json message
+        eval_count_pattern = re.compile(rb'"completion_tokens":(\d+)')
+        prompt_eval_count_pattern = re.compile(rb'"prompt_tokens":(\d+)')
+        # Search for the pattern in the data
+    else:
+        # Use regex as eval_count is not always in a valid json message
+        eval_count_pattern = re.compile(rb'"eval_count":(\d+)')
+        prompt_eval_count_pattern = re.compile(rb'"prompt_eval_count":(\d+)')
+
+    # Search for the pattern in the data
+    eval_count_match = eval_count_pattern.search(chunks)
+    prompt_eval_count_match = prompt_eval_count_pattern.search(chunks)
+
+    if eval_count_match:
+        eval_count = int(eval_count_match.group(1))
+    else:
+        logger.info('Unable to find eval_count in response')
+        eval_count = count
+    if prompt_eval_count_match:
+        prompt_count = int(prompt_eval_count_match.group(1))
+    else:
+        prompt_count = 0
+    return eval_count, prompt_count
+
+
 def main_loop():
     logger.info("Ollama Proxy server")
     logger.info("Author: ParisNeo, rcastberg")
@@ -354,7 +384,12 @@ def main_loop():
                 return
             super().send_header(keyword, value)
 
-        def _send_response(self, response, stream=True):
+        def _send_response(self, response, stream=True, chat_gpt=False):
+            # Send the response to the client
+            # Calculate the number of tokens, and if not returned by ollama
+            # return the number of words as a rough estimate.
+            eval_count = 0
+            prompt_count = 0
             if stream:
                 self.send_response(response.status_code)
                 for key, value in response.headers.items():
@@ -370,7 +405,8 @@ def main_loop():
 
                 chunks = [b"", b"", b""]
                 count = 0
-                eval_data = None
+
+                llm_response = None
                 try:
                     for chunk in response.iter_content(chunk_size=1024):
                         if chunk:
@@ -378,10 +414,9 @@ def main_loop():
                             self.wfile.write(b"%X\r\n%s\r\n" % (len(chunk), chunk))
                             self.wfile.flush()
                             chunks = ring_buffer(chunks, chunk)
-                            if b"eval_count" in chunks[1]:
-                                eval_data = chunks
-                    if not eval_data:
-                        eval_data = chunks
+
+                    eval_count, prompt_count = get_streamed_token_count(chunks, chat_gpt, count)
+
                     self.wfile.write(b"0\r\n\r\n")
                 except BrokenPipeError:
                     pass
@@ -399,21 +434,15 @@ def main_loop():
                     self.wfile.write(response.content)
                     self.wfile.flush()
 
-                    eval_data = response.content
-                    count = len(eval_data)
+                    llm_response = response.content
                 except BrokenPipeError:
-                    eval_data = response.content
-                    count = len(eval_data)
+                    llm_response = response.content
                 except Exception as e:
-                    logging.error(f"An unexpected error occurred: {e}")
-            logger.debug('Eval_data content %s', str(eval_data))
+                    logging.error("An unexpected error occurred: %s", str(e))
+                eval_count, prompt_count = get_streamed_token_count(llm_response, chat_gpt, len(llm_response))
+            logger.debug('Eval_count %s, Prompt_count %s', str(eval_count), str(prompt_count))
             logger.debug("Curl string: %s", self.curl_string)
-            if eval_data is int:
-                return eval_data, count
-            elif eval_data is not None:
-                return b"".join(eval_data), count
-            else:
-                return eval_data, count
+            return eval_count, prompt_count
 
         def send_simple_response(self, content, code=200, response_type="application/json"):
             self.send_response(code)
@@ -685,57 +714,14 @@ def main_loop():
                             backend_headers,
                         )
                         if response:
-                            last_chunk, count = self._send_response(response, stream=streamed_request)
-                            if "/v1/" in stripped_path:  # ChatGPT
-                                # add stuff
-                                try:
-                                    info = json.loads(last_chunk.split(b"\n")[-2])
-                                except Exception as e:
-                                    logger.debug("Exception: %s", e)
-                                    try:
-                                        info = json.loads(response.content)
-                                    except Exception as e2:
-                                        logger.debug("Exception: %s", e2)
-                                        # Fall back method, return number of words:
-                                        # Should eventually be fixed by : https://github.com/ollama/ollama/pull/6784
-                                        # See https://github.com/ollama/ollama/issues/4448
-                                        info = {"usage": {"prompt_tokens": 0, "completion_tokens": 0}}
-                                        info["usage"]["prompt_tokens"] = sum([len(i["content"].split()) for i in post_data_dict["messages"]])
-                                        info["usage"]["completion_tokens"] = count
-                                try:
-                                    input_tokens = info["usage"]["prompt_tokens"]
-                                    output_tokens = info["usage"]["completion_tokens"]
-                                except json.decoder.JSONDecodeError:
-                                    logger.info(
-                                        "Failed to parse response: %s", response.content
-                                    )
-                                    logger.info("Response: %s", response)
-                                break
+                            if "/v1/" in stripped_path:
+                                chat_gpt = True
                             else:
-                                try:
-                                    info = json.loads(last_chunk.split(b"\n")[-2])
-                                except IndexError:
-                                    info = json.loads(response.content)
-                                except AttributeError:
-                                    # Request was canceled? FIX
-                                    info = ""
-                                    logger.warning("Request was possibly canceled, not counting")
-                                try:
-                                    input_tokens = info["prompt_eval_count"]
-                                    output_tokens = info["eval_count"]
-                                except json.decoder.JSONDecodeError:
-                                    logger.debug(
-                                        "Failed to parse response: %s", response.content
-                                    )
-                                    logger.debug("Response: %s", response)
-                                except Exception as e:
-                                    logger.debug(
-                                        "Failed to find tokens usage, response: %s",
-                                        response.content,
-                                    )
-                                    logger.debug("Response: %s", response)
-                                    logger.debug("Exception: %s", e)
-                                break
+                                chat_gpt = False
+                            eval_count, prompt_count = self._send_response(response, stream=streamed_request, chat_gpt=chat_gpt)
+                            input_tokens = prompt_count
+                            output_tokens = eval_count
+                            break
                         else:
                             # All retries failed, try next server
                             logger.warning(
