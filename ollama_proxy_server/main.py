@@ -7,17 +7,33 @@ import logging
 import os
 import re
 import time
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from queue import Queue
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 
+import pandas as pd
 import requests
 
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+CSV_HEADER = [
+    "time_stamp",
+    "event",
+    "user_name",
+    "ip_address",
+    "access",
+    "server",
+    "nb_queued_requests_on_server",
+    "input_tokens",
+    "output_tokens",
+    "error"
+]
 
 
 def get_config(filename, config_string=None, default_timeout=300):
@@ -144,9 +160,7 @@ def parse_args(home_folder=""):
         default=3,
         help="Number of retry attempts for failed calls",
     )
-    parser.add_argument(
-        "-d", "--deactivate_security", action="store_true", help="Deactivates security"
-    )
+
     args = parser.parse_args()
 
     return args
@@ -272,34 +286,12 @@ def add_access_log_entry(
         with open(
             log_file_path, mode="w", newline="", encoding="utf8"
         ) as csvfile:
-            fieldnames = [
-                "time_stamp",
-                "event",
-                "user_name",
-                "ip_address",
-                "access",
-                "server",
-                "nb_queued_requests_on_server",
-                "input_tokens",
-                "output_tokens",
-                "error",
-            ]
+            fieldnames = CSV_HEADER
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
     with open(log_file_path, mode="a", newline="", encoding="utf8") as csvfile:
-        fieldnames = [
-            "time_stamp",
-            "event",
-            "user_name",
-            "ip_address",
-            "access",
-            "server",
-            "nb_queued_requests_on_server",
-            "input_tokens",
-            "output_tokens",
-            "error",
-        ]
+        fieldnames = CSV_HEADER
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         row = {
             "time_stamp": str(datetime.datetime.now()),
@@ -353,6 +345,7 @@ def main_loop():
     logger.info("Version: %s", get_version())
     home_folder = check_sys_env("OP_HOME", default="")
     logger.info("Home folder: %s", home_folder)
+
     args = parse_args()
     logger.debug("Default Arguments: %s", args)
 
@@ -370,12 +363,10 @@ def main_loop():
         authorized_users = get_authorized_users(
             args.users_list, check_sys_env("OP_AUTHORIZED_USERS")
         )
-        deactivate_security = check_sys_env(
-            "OP_DEACTIVATE_SECURITY", default=args.deactivate_security
-        )
+
         log_path = check_sys_env("OP_LOG_PATH", default=args.log_path)
         logger.debug(
-            f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, deactivate_security={deactivate_security}, log_path={log_path}"
+            f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, log_path={log_path}"
         )
 
         def send_header(self, keyword, value):
@@ -463,10 +454,13 @@ def main_loop():
             try:
                 # Extract the bearer token from the headers
                 auth_header = self.headers.get("Authorization")
-                if not auth_header or not auth_header.startswith("Bearer "):
+                if self.cookie_auth_token:
+                    user, key = self.cookie_auth_token.value.split(":")
+                elif auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.split(" ")[1]
+                    user, key = token.split(":")
+                else:
                     return False
-                token = auth_header.split(" ")[1]
-                user, key = token.split(":")
                 logger.debug("%s %s", user, key)
 
                 # Check if the user and key are in the list of authorized users
@@ -537,13 +531,34 @@ def main_loop():
             logger.debug("URL: %s", url)
             path = url.path
             self.curl_string += str(path)
+
+            # Check for authentication cookie
+            cookie_header = self.headers.get("Cookie")
+            cookies = SimpleCookie(cookie_header)
+            self.cookie_auth_token = cookies.get("auth_token")
+
             if path == "/":
                 self.send_simple_response(b"Ollama is running")
                 return
-            if path == "/health":
+            elif path == "/health":
                 self.send_simple_response(b"OK")
                 return
-            if not self.deactivate_security and not self._validate_user_and_key():
+            elif "admin" in path:
+                self.send_response(302)
+                self.send_header("Location", "/local/login/")
+                self.end_headers()
+                return
+            elif path == "/local/login":
+                if self.cookie_auth_token:
+                    self.send_response(302)
+                    self.send_header("Location", "/local/view_stats/")
+                    self.end_headers()
+                    return
+                with open("ollama_proxy_server/login.html", "r", encoding="utf-8") as f:
+                    html_data = f.read()
+                self.send_simple_response(html_data.encode("utf-8"), 200, "text/html")
+                return
+            if not self._validate_user_and_key():
                 logger.warning("User is not authorized")
                 client_ip, client_port = self.client_address
                 # Extract the bearer token from the headers
@@ -766,9 +781,9 @@ def main_loop():
 
                         # Write the new user to the authorized users file
                         with open(args.users_list, "w", encoding="utf8") as f:
-                            for user, data in self.authorized_users.items():
+                            for user, html_data in self.authorized_users.items():
                                 f.write(
-                                    f"{user}:{data['key']}:{data['role']}:{','.join(data['models'])}\n"
+                                    f"{user}:{html_data['key']}:{html_data['role']}:{','.join(html_data['models'])}\n"
                                 )
                         self.send_simple_response(b"User deleted", 200, "text/plain")
                     else:
@@ -793,9 +808,9 @@ def main_loop():
                     self.send_simple_response(b"User added", 200, "text/plain")
                     # Write the new user to the authorized users file
                     with open(args.users_list, "w", encoding="utf8") as f:
-                        for user, data in self.authorized_users.items():
+                        for user, html_data in self.authorized_users.items():
                             f.write(
-                                f"{user};{data['key']};{data['role']};{','.join(data['models'])}\n"
+                                f"{user};{html_data['key']};{html_data['role']};{','.join(html_data['models'])}\n"
                             )
                 else:
                     self.send_simple_response(b"Unauthorized, %s, user not admin" % self.user, 403)
@@ -822,9 +837,9 @@ def main_loop():
                         self.send_simple_response(b"Failed to add users, %s" % json.dumps(import_Status).encode('utf-8'), 400, "text/plain")
                     # Write the new user to the authorized users file
                     with open(args.users_list, "w", encoding="utf8") as f:
-                        for user, data in self.authorized_users.items():
+                        for user, html_data in self.authorized_users.items():
                             f.write(
-                                f"{user};{data['key']};{data['role']};{','.join(data['models'])}\n"
+                                f"{user};{html_data['key']};{html_data['role']};{','.join(html_data['models'])}\n"
                             )
                 else:
                     response_data = "Unauthorized, %s, user not admin" % self.user
@@ -852,6 +867,17 @@ def main_loop():
                 server_ps = get_running_models(self, path, get_params, post_data_dict, backend_headers)
                 server_ps = json.dumps(server_ps).encode("utf-8")
                 self.send_simple_response(server_ps)
+            elif stripped_path in ["/local/view_stats"]:
+                with open('ollama_proxy_server/access_log.html', 'r', encoding='utf-8') as f:
+                    html_data = f.read()
+                self.send_simple_response(html_data.encode('utf-8'), 200, "text/html")
+            elif stripped_path in ["/local/download_stats"]:
+                with open(self.log_path, 'r', encoding='utf-8') as f:
+                    html_data = f.readlines()
+                self.send_simple_response('\n'.join(html_data).encode('utf-8'), 200, "text/csv")
+            elif stripped_path in ["/local/json_stats"]:
+                data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', names=CSV_HEADER)
+                self.send_simple_response(str(data.to_json()).encode("utf-8"), 200)
             else:
                 logger.warning("Not recognized path, running : %s", stripped_path)
                 # For other endpoints, mirror the request to the default server with retries
