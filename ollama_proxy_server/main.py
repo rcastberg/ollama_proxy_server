@@ -558,7 +558,7 @@ def main_loop():
                 self.send_simple_response(b"OK")
                 return
             elif "/admin" in path:
-                match = re.search(r'^/admin/([a-zA-Z]+\.[a-zA-Z]{2,4})$', path)
+                match = re.search(r'^\/admin\/([A-Za-z]+\.[A-Za-z]{2,4})$', path)
                 if match:
                     with open("ollama_proxy_server/" + match.group(1), "r", encoding="utf-8") as f:
                         file_contents = f.read()
@@ -568,7 +568,7 @@ def main_loop():
                     self.send_response(302)
                     self.send_header("Location", "/local/login")
                     self.end_headers()
-                    self.wfile.write(b"Redirecting to login page".encode("utf-8"))
+                    self.wfile.write("Redirecting to login page".encode("utf-8"))
                 return
             elif path == "/local/login":
                 if self.cookie_auth_token and self._validate_user_and_key():
