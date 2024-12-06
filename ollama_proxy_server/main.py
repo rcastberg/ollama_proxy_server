@@ -122,13 +122,12 @@ def get_authorized_users(filename, users_env=None):
         "Loaded authorized users from File and Env(priority): %s",
         str(list(authorized_users.keys())),
     )
-    logger.debug("RAW Authorized users: %s", authorized_users)
     return authorized_users
 
 
 def check_sys_env(name, default=None):
     if name in os.environ:
-        logger.debug("Using environment variable %s, %s", name, os.environ[name])
+        logger.debug("Using environment variable %s: %s...", name, os.environ[name][0:5])
         return os.environ[name]
     else:
         if default is not None:
@@ -382,9 +381,6 @@ def main_loop():
         )
 
         log_path = check_sys_env("OP_LOG_PATH", default=args.log_path)
-        logger.debug(
-            f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, log_path={log_path}"
-        )
 
         def send_header(self, keyword, value):
             # Remove duplicate data in headers
