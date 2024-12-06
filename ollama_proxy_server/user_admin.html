@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Preferences</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            margin: 20px;
+        }
+        .user-card {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+        }
+        .user-card h3 {
+            margin-top: 0;
+        }
+        .model-select {
+            width: 100%;
+        }
+        .action-buttons {
+            margin-top: 10px;
+        }
+    </style>
+    <script src="/admin/sidebar.js" defer></script>
+</head>
+<body>
+    <div id="wrapper">
+        <div id="content">
+    <div class="container">
+        <h1>Edit User Preferences</h1>
+
+        <!-- User Selector -->
+        <div>
+            <button onclick="resetUsers()">Reset Users</button>
+            <input type="file" id="import-csv" accept=".csv" onchange="importCSV(event)">
+        </div>
+        <div>
+            <label for="user-selector">Select User: </label>
+            <select id="user-selector" onchange="renderUserCard()">
+                <option value="" disabled selected>Select a user</option>
+            </select>
+        </div>
+
+        <!-- Add User Button -->
+        <button onclick="addUser()">Add New User</button>
+
+        <!-- User Card Container -->
+        <div id="user-card-container" style="margin-top: 20px;"></div>
+
+        <button onclick="savePreferences()">Save Changes</button>
+    </div>
+</div>
+</div>
+    <script>
+        const userEndpoint = '/local/user_dump';
+        const modelEndpoint = '/api/tags';
+        const updateEndpoint = '/local/user_update';
+        let users = {};
+        let models = [];
+
+        async function fetchUsers() {
+            try {
+                const response = await fetch(userEndpoint);
+                if (!response.ok) throw new Error(`Error fetching users: ${response.status}`);
+                users = await response.json();
+                populateUserSelector();
+            } catch (error) {
+                console.error(error);
+                alert('Failed to load users.');
+            }
+        }
+
+        async function fetchModels() {
+            try {
+                const response = await fetch(modelEndpoint);
+                if (!response.ok) throw new Error(`Error fetching models: ${response.status}`);
+                const modelData = await response.json();
+                models = modelData.models.map(model => model.name);
+            } catch (error) {
+                console.error(error);
+                alert('Failed to load models.');
+            }
+        }
+
+        function populateUserSelector() {
+            const selector = document.getElementById('user-selector');
+            selector.innerHTML = '<option value="" disabled selected>Select a user</option>';
+            Object.keys(users).forEach(username => {
+                const option = document.createElement('option');
+                option.value = username;
+                option.text = username;
+                selector.appendChild(option);
+            });
+        }
+
+        async function resetUsers() {
+            try {
+                const response = await fetch(userEndpoint);
+                if (!response.ok) throw new Error(`Error fetching users: ${response.status}`);
+                users = await response.json();
+                populateUserSelector();
+                document.getElementById('user-card-container').innerHTML = ''; // Clear the user card display
+                alert('Users have been reset to the server state.');
+            } catch (error) {
+                console.error(error);
+                alert('Failed to reset users.');
+            }
+        }
+
+        function importCSV(event) {
+            const file = event.target.files[0];
+            if (!file) {
+                alert('No file selected.');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const csvText = e.target.result;
+                parseCSV(csvText);
+            };
+            reader.readAsText(file);
+        }
+
+        function parseCSV(csvText) {
+            const rows = csvText.split('\n').map(row => row.trim());
+            rows.forEach((row, index) => {
+                if (!row) return;
+                const [username, key, role, models] = row.split(';');
+                if (!username || !key || !role || !models) {
+                    console.warn(`Skipping invalid row at line ${index + 1}`);
+                    return;
+                }
+
+                users[username] = {
+                    key,
+                    role,
+                    models: models.split(',').map(model => model.trim())
+                };
+            });
+
+            populateUserSelector();
+            alert('CSV data has been imported successfully.');
+        }
+
+        function processCSV() {
+            document.getElementById('import-csv').click(); // Trigger file input click
+        }
+
+        function renderUserCard() {
+            const userCardContainer = document.getElementById('user-card-container');
+            userCardContainer.innerHTML = '';
+
+            const selectedUser = document.getElementById('user-selector').value;
+            if (!selectedUser) return;
+
+            const data = users[selectedUser];
+
+            const userCard = document.createElement('div');
+            userCard.className = 'user-card';
+
+            const title = document.createElement('h3');
+            title.innerText = selectedUser;
+            userCard.appendChild(title);
+
+            // Role Dropdown
+            const roleLabel = document.createElement('label');
+            roleLabel.innerText = 'Role: ';
+            userCard.appendChild(roleLabel);
+
+            const roleSelect = document.createElement('select');
+            ['admin', 'user', 'none'].forEach(role => {
+                const option = document.createElement('option');
+                option.value = role;
+                option.text = role;
+                option.selected = data.role === role;
+                roleSelect.appendChild(option);
+            });
+            roleSelect.onchange = (e) => data.role = e.target.value;
+            userCard.appendChild(roleSelect);
+
+            userCard.appendChild(document.createElement('br')); // Line break for spacing
+
+            // Key Display
+            const keyLabel = document.createElement('label');
+            keyLabel.innerText = 'Key: ';
+            userCard.appendChild(keyLabel);
+
+            const keyDisplay = document.createElement('span');
+            keyDisplay.innerText = data.key;
+            keyDisplay.style.marginRight = '10px';
+            userCard.appendChild(keyDisplay);
+
+            const regenerateButton = document.createElement('button');
+            regenerateButton.innerText = 'Regenerate Key';
+            regenerateButton.onclick = () => {
+                data.key = generateHexKey();
+                keyDisplay.innerText = data.key;
+            };
+            userCard.appendChild(regenerateButton);
+
+            // Models Section
+            const modelLabel = document.createElement('label');
+            modelLabel.innerText = ' Models:';
+            modelLabel.style.display = 'block';
+            modelLabel.style.marginTop = '10px';
+            userCard.appendChild(modelLabel);
+
+            const selectAllCheckbox = document.createElement('input');
+            selectAllCheckbox.type = 'checkbox';
+            selectAllCheckbox.checked = data.models.includes('*');
+            selectAllCheckbox.onchange = () => {
+                if (selectAllCheckbox.checked) {
+                    data.models = ['*'];
+                    modelSelect.disabled = true;
+                } else {
+                    data.models = [];
+                    modelSelect.disabled = false;
+                }
+            };
+            userCard.appendChild(selectAllCheckbox);
+
+            const checkboxLabel = document.createElement('span');
+            checkboxLabel.innerText = ' Select All';
+            userCard.appendChild(checkboxLabel);
+
+            const modelSelect = document.createElement('select');
+            modelSelect.className = 'model-select';
+            modelSelect.multiple = true;
+            modelSelect.disabled = data.models.includes('*');
+
+            models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model;
+                option.text = model;
+                option.selected = data.models.includes('*') || data.models.includes(model);
+                modelSelect.appendChild(option);
+            });
+
+            modelSelect.onchange = (e) => {
+                const selectedModels = Array.from(e.target.selectedOptions).map(opt => opt.value);
+                data.models = selectedModels;
+            };
+            userCard.appendChild(modelSelect);
+
+            // Delete User Button
+            const deleteButton = document.createElement('button');
+            deleteButton.innerText = 'Delete User';
+            deleteButton.style.marginTop = '15px';
+            deleteButton.onclick = () => {
+                delete users[selectedUser];
+                populateUserSelector();
+                userCardContainer.innerHTML = '';
+                alert(`User "${selectedUser}" has been deleted.`);
+            };
+            userCard.appendChild(deleteButton);
+
+            userCardContainer.appendChild(userCard);
+        }
+
+        function addUser() {
+            const newUsername = prompt('Enter a new username:');
+            if (!newUsername || users[newUsername]) {
+                alert('Invalid or duplicate username.');
+                return;
+            }
+
+            users[newUsername] = {
+                key: generateHexKey(),
+                role: 'none',
+                models: []
+            };
+
+            populateUserSelector();
+            document.getElementById('user-selector').value = newUsername;
+            renderUserCard();
+        }
+
+        async function savePreferences() {
+            try {
+                const response = await fetch(updateEndpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(users)
+                });
+
+                console.log(response)
+
+                if (!response.ok) throw new Error(`Error saving preferences: ${response.status}`);
+                alert('Changes saved successfully!');
+            } catch (error) {
+                console.error(error);
+                alert('Failed to save changes.');
+            }
+        }
+
+        function generateHexKey() {
+            return [...Array(40)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+        }
+
+        // Initialize data fetch
+        async function initialize() {
+            await fetchModels();
+            await fetchUsers();
+        }
+
+        initialize();
+    </script>
+
+</body>
+</html>

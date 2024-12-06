@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings Manager</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .setting {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        label {
+            display: block;
+            margin-top: 5px;
+        }
+        input, select {
+            width: 100%;
+            padding: 5px;
+            margin-top: 3px;
+        }
+        button {
+            margin-top: 10px;
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .delete-btn {
+            background-color: #dc3545;
+        }
+        .delete-btn:hover {
+            background-color: #c82333;
+        }
+        #add-server {
+            margin-top: 20px;
+            background-color: #28a745;
+        }
+        #add-server:hover {
+            background-color: #218838;
+        }
+    </style>
+    <script src="/admin/sidebar.js" defer></script>
+</head>
+<body>
+ <div id="wrapper">
+    <div id="content">
+<h1>Settings Manager</h1>
+<div id="settings-container"></div>
+<button id="add-server" onclick="addServer()">Add Server</button>
+<button onclick="saveSettings()">Save Settings</button>
+
+<script>
+    let serverModels = {};
+
+    async function fetchSettings() {
+        try {
+            const settingsResponse = await fetch('/local/get_settings');
+            const settings = await settingsResponse.json();
+
+            const modelsResponse = await fetch('/api/full_tags');
+            serverModels = await modelsResponse.json();
+
+            renderSettings(settings);
+        } catch (error) {
+            console.error('Error fetching settings or models:', error);
+        }
+    }
+    function renderSettings(settings) {
+        const container = document.getElementById('settings-container');
+        container.innerHTML = '';
+
+        settings.forEach(([name, config]) => {
+            const section = document.createElement('div');
+            section.className = 'setting';
+
+            // Editable server name
+            const nameLabel = document.createElement('label');
+            nameLabel.textContent = 'Server Name';
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.value = name;
+            nameInput.dataset.settingKey = 'server_name';
+
+            section.appendChild(nameLabel);
+            section.appendChild(nameInput);
+
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = 'Delete Server';
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.onclick = () => section.remove();
+            section.appendChild(deleteBtn);
+
+            const inputs = [
+                { label: 'URL', type: 'text', key: 'url', value: config.url },
+                { label: 'Queue Size', type: 'number', key: 'queue_size', value: config.queue_size },
+                { label: 'Timeout', type: 'number', key: 'timeout', value: config.timeout },
+            ];
+
+            inputs.forEach(({ label, type, key, value }) => {
+                const inputLabel = document.createElement('label');
+                inputLabel.textContent = label;
+                const input = document.createElement('input');
+                input.type = type;
+                input.value = value;
+                input.dataset.settingName = name;
+                input.dataset.settingKey = key;
+
+                section.appendChild(inputLabel);
+                section.appendChild(input);
+            });
+
+            const modelLabel = document.createElement('label');
+            modelLabel.textContent = 'Models';
+            const modelSelect = document.createElement('select');
+            modelSelect.multiple = true;
+            modelSelect.dataset.settingName = name;
+            modelSelect.dataset.settingKey = 'models';
+
+            if (serverModels[name]) {
+                const allModels = Object.keys(serverModels[name]);
+                const selectedModels = config.models;
+
+                // Sort models: selected first, then unselected
+                const sortedModels = allModels.sort((a, b) => {
+                    if (selectedModels.includes(a) && !selectedModels.includes(b)) return -1;
+                    if (!selectedModels.includes(a) && selectedModels.includes(b)) return 1;
+                    return 0;
+                });
+
+                // Create options
+                sortedModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    if (selectedModels.includes(model)) {
+                        option.selected = true;
+                    }
+                    modelSelect.appendChild(option);
+                });
+            } else {
+                const noModelsOption = document.createElement('option');
+                noModelsOption.textContent = 'No models available';
+                noModelsOption.disabled = true;
+                modelSelect.appendChild(noModelsOption);
+            }
+
+            section.appendChild(modelLabel);
+            section.appendChild(modelSelect);
+
+            container.appendChild(section);
+        });
+    }
+
+    function addServer() {
+        const container = document.getElementById('settings-container');
+
+        const newSection = document.createElement('div');
+        newSection.className = 'setting';
+
+        const nameLabel = document.createElement('label');
+        nameLabel.textContent = 'Server Name';
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.placeholder = 'Enter Server Name';
+        nameInput.dataset.settingKey = 'server_name';
+
+        newSection.appendChild(nameLabel);
+        newSection.appendChild(nameInput);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = 'Delete Server';
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.onclick = () => newSection.remove();
+
+        newSection.appendChild(deleteBtn);
+
+        const inputs = [
+            { label: 'URL', type: 'text', key: 'url', value: '' },
+            { label: 'Queue Size', type: 'number', key: 'queue_size', value: 1 },
+            { label: 'Timeout', type: 'number', key: 'timeout', value: 300 },
+        ];
+
+        inputs.forEach(({ label, type, key, value }) => {
+            const inputLabel = document.createElement('label');
+            inputLabel.textContent = label;
+            const input = document.createElement('input');
+            input.type = type;
+            input.value = value;
+            input.dataset.settingKey = key;
+
+            newSection.appendChild(inputLabel);
+            newSection.appendChild(input);
+        });
+
+        const modelLabel = document.createElement('label');
+        modelLabel.textContent = 'Models';
+        const modelSelect = document.createElement('select');
+        modelSelect.multiple = true;
+        modelSelect.dataset.settingKey = 'models';
+
+        const noModelsOption = document.createElement('option');
+        noModelsOption.textContent = 'No models available';
+        noModelsOption.disabled = true;
+        modelSelect.appendChild(noModelsOption);
+
+        newSection.appendChild(modelLabel);
+        newSection.appendChild(modelSelect);
+
+        container.appendChild(newSection);
+    }
+
+    async function saveSettings() {
+        try {
+            const container = document.getElementById('settings-container');
+            const sections = container.querySelectorAll('.setting');
+            const newSettings = [];
+
+            sections.forEach(section => {
+                const nameInput = section.querySelector('input[data-setting-key="server_name"]');
+                const name = nameInput.value;
+
+                const config = {};
+                const inputs = section.querySelectorAll('input, select');
+
+                inputs.forEach(input => {
+                    const key = input.dataset.settingKey;
+
+                    if (input.tagName === 'SELECT') {
+                        config[key] = Array.from(input.options)
+                            .filter(option => option.selected)
+                            .map(option => option.value);
+                    } else if (key !== 'server_name') {
+                        config[key] = input.type === 'number' ? Number(input.value) : input.value;
+                    }
+                });
+
+                newSettings.push([name, config]);
+            });
+
+            const response = await fetch('/local/push_settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newSettings),
+            });
+
+            if (response.ok) {
+                alert('Settings saved successfully!');
+            } else {
+                alert('Failed to save settings.');
+            }
+        } catch (error) {
+            console.error('Error saving settings:', error);
+        }
+    }
+    fetchSettings();
+</script>
+</div>
+</div>
+</body>
+</html>

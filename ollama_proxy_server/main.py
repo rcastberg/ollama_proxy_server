@@ -7,17 +7,36 @@ import logging
 import os
 import re
 import time
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import StringIO
 from pathlib import Path
 from queue import Queue
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 
+import pandas as pd
 import requests
 
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+CSV_HEADER = [
+    "time_stamp",
+    "event",
+    "user_name",
+    "ip_address",
+    "access",
+    "server",
+    "nb_queued_requests_on_server",
+    "input_tokens",
+    "output_tokens",
+    "error"
+]
+
+MIME_TYPES = {'html': 'text/html', 'js': 'text/javascript', 'css': 'text/css', 'json': 'application/json', 'txt': 'text/plain'}
 
 
 def get_config(filename, config_string=None, default_timeout=300):
@@ -55,6 +74,19 @@ def get_config(filename, config_string=None, default_timeout=300):
     return servers
 
 
+def write_config(filename, servers):
+    config = configparser.ConfigParser()
+    for name, server in servers:
+        config[name] = {
+            "url": server["url"],
+            "models": ", ".join(server["models"]),
+            "timeout": str(server["timeout"]),
+            "queue_size": str(server["queue_size"]),
+        }
+    with open(filename, "w") as f:
+        config.write(f)
+
+
 def read_users_from_lines(lines, location):
     authorized_users = {}
     for line in lines:
@@ -80,7 +112,7 @@ def get_authorized_users(filename, users_env=None):
         file_lines = []
     authorized_users_file = read_users_from_lines(file_lines, filename)
     if users_env:
-        lines = users_env.split("\n")
+        lines = re.split('[|,\n]', users_env)
         authorized_users_env = read_users_from_lines(lines, 'Env')
     else:
         authorized_users_env = {}
@@ -125,14 +157,14 @@ def get_version():
 def parse_args(home_folder=""):
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", default=home_folder + "config.ini", help="Path to the config file"
+        "--config", default=os.path.join(home_folder, "config.ini"), help="Path to the config file"
     )
     parser.add_argument(
-        "--log_path", default=home_folder + "access_log.txt", help="Path to the access log file"
+        "--log_path", default=os.path.join(home_folder, "access_log.txt"), help="Path to the access log file"
     )
     parser.add_argument(
         "--users_list",
-        default=home_folder + "authorized_users.txt",
+        default=os.path.join(home_folder, "authorized_users.txt"),
         help="Path to the authorized users list",
     )
     parser.add_argument(
@@ -144,9 +176,7 @@ def parse_args(home_folder=""):
         default=3,
         help="Number of retry attempts for failed calls",
     )
-    parser.add_argument(
-        "-d", "--deactivate_security", action="store_true", help="Deactivates security"
-    )
+
     args = parser.parse_args()
 
     return args
@@ -178,11 +208,11 @@ def get_running_models(class_object, path, get_params, post_data_dict, backend_h
     return server_ps
 
 
-def get_available_models(class_object, path, get_params, post_data_dict, backend_headers):
+def get_available_models(class_object, path, get_params, post_data_dict, backend_headers, filtered_list=True):
     logger.debug("List supported models")
-    models = [
+    models = list(set([
         model for server in class_object.servers for model in server[1]["models"]
-    ]
+    ]))  # Remove duplicates
     model_info = []
     server_tags = {}
     if "v1/models" in path:
@@ -194,6 +224,7 @@ def get_available_models(class_object, path, get_params, post_data_dict, backend
         model_entry_name = "name"
         data_entry_name = "models"
 
+    # Get complete list of supported models from all servers
     for server in class_object.servers:
         response = class_object.send_request_with_retries(
             server[1], path, get_params, post_data_dict, backend_headers
@@ -208,25 +239,25 @@ def get_available_models(class_object, path, get_params, post_data_dict, backend
         else:
             logger.debug("Failed to receive response from server %s", server[0])
 
+    # If we want the raw data, for exmaple for the admin page, return the full list
+    if not filtered_list:
+        return server_tags
+
+    # Filter only the models allowed by the server spesification
     for model in models:
-        available_servers = [
-            server
-            for server in class_object.servers
-            if model in server[1]["models"]
-        ]
+        available_servers = [server for server in class_object.servers if model in server[1]["models"]]
         logger.debug(
             "Available servers for model '%s': %s",
             model,
             str([s[0] for s in available_servers]),
         )
-        for server in available_servers:
-            try:
-                model_info.append(server_tags[server[0]][model])
-            except Exception as e:
-                logger.debug("Model not found, Exception: %s", e)
-                logger.warning(
-                    "Model %s not found in server %s", model, server[0]
-                )
+        try:
+            current_model = server_tags[available_servers[0][0]][model]
+            current_model["servers"] = [server[0] for server in available_servers]
+            model_info.append(current_model)
+        except IndexError:
+            logger.warning("Model %s not found in any server", model)
+
     if "v1/models" in path:
         model_info = {"object": "list", "data": model_info}
     else:
@@ -272,34 +303,12 @@ def add_access_log_entry(
         with open(
             log_file_path, mode="w", newline="", encoding="utf8"
         ) as csvfile:
-            fieldnames = [
-                "time_stamp",
-                "event",
-                "user_name",
-                "ip_address",
-                "access",
-                "server",
-                "nb_queued_requests_on_server",
-                "input_tokens",
-                "output_tokens",
-                "error",
-            ]
+            fieldnames = CSV_HEADER
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
     with open(log_file_path, mode="a", newline="", encoding="utf8") as csvfile:
-        fieldnames = [
-            "time_stamp",
-            "event",
-            "user_name",
-            "ip_address",
-            "access",
-            "server",
-            "nb_queued_requests_on_server",
-            "input_tokens",
-            "output_tokens",
-            "error",
-        ]
+        fieldnames = CSV_HEADER
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         row = {
             "time_stamp": str(datetime.datetime.now()),
@@ -353,7 +362,8 @@ def main_loop():
     logger.info("Version: %s", get_version())
     home_folder = check_sys_env("OP_HOME", default="")
     logger.info("Home folder: %s", home_folder)
-    args = parse_args()
+
+    args = parse_args(home_folder=home_folder)
     logger.debug("Default Arguments: %s", args)
 
     class RequestHandler(BaseHTTPRequestHandler):
@@ -370,12 +380,10 @@ def main_loop():
         authorized_users = get_authorized_users(
             args.users_list, check_sys_env("OP_AUTHORIZED_USERS")
         )
-        deactivate_security = check_sys_env(
-            "OP_DEACTIVATE_SECURITY", default=args.deactivate_security
-        )
+
         log_path = check_sys_env("OP_LOG_PATH", default=args.log_path)
         logger.debug(
-            f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, deactivate_security={deactivate_security}, log_path={log_path}"
+            f"Start up parameters: retry_attempts={retry_attempts}, servers={servers}, authorized_users={authorized_users}, log_path={log_path}"
         )
 
         def send_header(self, keyword, value):
@@ -463,10 +471,13 @@ def main_loop():
             try:
                 # Extract the bearer token from the headers
                 auth_header = self.headers.get("Authorization")
-                if not auth_header or not auth_header.startswith("Bearer "):
+                if self.cookie_auth_token:
+                    user, key = self.cookie_auth_token.value.split(":")
+                elif auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.split(" ")[1]
+                    user, key = token.split(":")
+                else:
                     return False
-                token = auth_header.split(" ")[1]
-                user, key = token.split(":")
                 logger.debug("%s %s", user, key)
 
                 # Check if the user and key are in the list of authorized users
@@ -537,13 +548,44 @@ def main_loop():
             logger.debug("URL: %s", url)
             path = url.path
             self.curl_string += str(path)
+
+            # Check for authentication cookie
+            cookie_header = self.headers.get("Cookie")
+            cookies = SimpleCookie(cookie_header)
+            self.cookie_auth_token = cookies.get("auth_token")
+            if (len(path) > 1) & (path[-1] == "/"):
+                path = path[:-1]
             if path == "/":
                 self.send_simple_response(b"Ollama is running")
                 return
-            if path == "/health":
+            elif path == "/health":
                 self.send_simple_response(b"OK")
                 return
-            if not self.deactivate_security and not self._validate_user_and_key():
+            elif "/admin" in path:
+                match = re.search(r'^/admin/([a-zA-Z]+\.[a-zA-Z]{2,4})$', path)
+                if match:
+                    with open("ollama_proxy_server/" + match.group(1), "r", encoding="utf-8") as f:
+                        file_contents = f.read()
+                    self.send_simple_response(file_contents.encode("utf-8"), 200, MIME_TYPES[path.split('.')[-1]])
+                else:
+                    # redirect to login page
+                    self.send_response(302)
+                    self.send_header("Location", "/local/login")
+                    self.end_headers()
+                    self.wfile.write(b"Redirecting to login page".encode("utf-8"))
+                return
+            elif path == "/local/login":
+                if self.cookie_auth_token and self._validate_user_and_key():
+                    self.send_response(302)
+                    self.send_header("Location", "/local/view_stats")
+                    self.end_headers()
+                    self.wfile.write(b"Redirecting to stats page".encode("utf-8"))
+                    return
+                with open("ollama_proxy_server/login.html", "r", encoding="utf-8") as f:
+                    file_contents = f.read()
+                self.send_simple_response(file_contents.encode("utf-8"), 200, "text/html")
+                return
+            if not self._validate_user_and_key():
                 logger.warning("User is not authorized")
                 client_ip, client_port = self.client_address
                 # Extract the bearer token from the headers
@@ -748,110 +790,64 @@ def main_loop():
                     # No server could handle the request
                     self.send_simple_response(b"No available servers could handle the request.", 503, "text/plain")
             elif stripped_path in ["/api/tags", "/v1/models"]:
-                model_info = get_available_models(self, path, get_params, post_data_dict, backend_headers)
+                model_info = get_available_models(self, path, get_params, post_data_dict, backend_headers, filtered_list=True)
+                model_info = json.dumps(model_info).encode("utf-8")
+                self.send_simple_response(model_info)
+            elif stripped_path in ["/api/full_tags"]:
+                model_info = get_available_models(self, "/api/tags", get_params, post_data_dict, backend_headers, filtered_list=False)
                 model_info = json.dumps(model_info).encode("utf-8")
                 self.send_simple_response(model_info)
             elif stripped_path in ["/api/pull", "/api/delete", "/api/push",
                                    "/api/copy", "/api/create"]:
                 self.send_simple_response("Unsupported in proxy", 503)
-            elif stripped_path in ["/local/delete_user"]:
-                if self.role == "admin":
-                    try:
-                        user = post_data_dict["user"]
-                    except KeyError:
-                        self.send_simple_response(b"Missing required fields in request", 400, "text/plain")
-                        return
-                    if user in self.authorized_users:
-                        del self.authorized_users[user]
-
-                        # Write the new user to the authorized users file
-                        with open(args.users_list, "w", encoding="utf8") as f:
-                            for user, data in self.authorized_users.items():
-                                f.write(
-                                    f"{user}:{data['key']}:{data['role']}:{','.join(data['models'])}\n"
-                                )
-                        self.send_simple_response(b"User deleted", 200, "text/plain")
-                    else:
-                        self.send_simple_response(b"User does not exist", 400, "text/plain")
-
-            elif stripped_path in ["/local/add_user"]:
-                # Check the role of the user:
-                if self.role == "admin":
-                    try:
-                        user = post_data_dict["user"]
-                        role = post_data_dict["role"]
-                        key = post_data_dict["key"]
-                        models = post_data_dict["models"]
-                    except KeyError:
-                        self.send_simple_response(b"Missing required fields in request", 400, "text/plain")
-                        return
-                    if user in self.authorized_users:
-                        self.send_simple_response(b"User already exists, updating", 400, "text/plain")
-                        return
-
-                    self.authorized_users[user] = {"key": key, "role": role, "models": models}
-                    self.send_simple_response(b"User added", 200, "text/plain")
-                    # Write the new user to the authorized users file
-                    with open(args.users_list, "w", encoding="utf8") as f:
-                        for user, data in self.authorized_users.items():
-                            f.write(
-                                f"{user};{data['key']};{data['role']};{','.join(data['models'])}\n"
-                            )
-                else:
-                    self.send_simple_response(b"Unauthorized, %s, user not admin" % self.user, 403)
-            elif stripped_path in ["/local/add_bulk_users"]:
-                # Check the role of the user:
-                import_Status = {}
-                if self.role == "admin":
-                    for user_info in post_data_dict:
-                        try:
-                            user = user_info["user"]
-                            role = user_info["role"]
-                            key = user_info["key"]
-                            models = user_info["models"].split(',')
-                            import_Status[user] = True
-                            self.authorized_users[user] = {"key": key, "role": role, "models": models}
-                        except KeyError:
-                            import_Status[user] = False
-                            continue
-                    if post_data_dict == {}:
-                        self.send_simple_response(b"Invalid json data, Failed to add users", 400, "text/plain")
-                    elif all(import_Status.values()):
-                        self.send_simple_response(b"Users added, %s" % json.dumps(import_Status).encode('utf-8'), 200, "text/plain")
-                    else:
-                        self.send_simple_response(b"Failed to add users, %s" % json.dumps(import_Status).encode('utf-8'), 400, "text/plain")
-                    # Write the new user to the authorized users file
-                    with open(args.users_list, "w", encoding="utf8") as f:
-                        for user, data in self.authorized_users.items():
-                            f.write(
-                                f"{user};{data['key']};{data['role']};{','.join(data['models'])}\n"
-                            )
-                else:
-                    response_data = "Unauthorized, %s, user not admin" % self.user
-                    self.send_simple_response(response_data.encode('utf-8'), 403)
-            elif stripped_path in ["/local/reload_config"]:
-                # Update the values in the main class.  This is a hack to allow the server to reload the config file.
-                RequestHandler.servers = get_config(args.config, config_string=check_sys_env("OP_SERVERS", "").replace(";", "\n"))
-                RequestHandler.authorized_users = get_authorized_users(args.users_list, check_sys_env("OP_AUTHORIZED_USERS"))
-                current_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
-
-                # Remove queues from the config as they are not serializable
-                def default(o):
-                    return f"<<non-serializable: {type(o).__qualname__}>>"
-                current_config = json.dumps(current_config, default=default).encode("utf-8")
-                self.send_simple_response(current_config)
-            elif stripped_path in ["/local/get_config"]:
-                current_config = {'servers': self.servers, 'users': [user for user in self.authorized_users]}
-
-                # Remove queues from the config as they are not serializable
-                def default(o):
-                    return f"<<non-serializable: {type(o).__qualname__}>>"
-                current_config = json.dumps(current_config, default=default).encode("utf-8")
-                self.send_simple_response(current_config)
             elif stripped_path in ["/api/ps"]:
                 server_ps = get_running_models(self, path, get_params, post_data_dict, backend_headers)
                 server_ps = json.dumps(server_ps).encode("utf-8")
                 self.send_simple_response(server_ps)
+            elif self.role == "admin":
+                if stripped_path in ["/local/view_stats"]:
+                    with open('ollama_proxy_server/access_log.html', 'r', encoding='utf-8') as f:
+                        file_contents = f.read()
+                    self.send_simple_response(file_contents.encode('utf-8'), 200, "text/html")
+                elif stripped_path in ["/local/user_admin"]:
+                    with open('ollama_proxy_server/user_admin.html', 'r', encoding='utf-8') as f:
+                        file_contents = f.read()
+                    self.send_simple_response(file_contents.encode('utf-8'), 200, "text/html")
+                elif stripped_path in ["/local/server_admin"]:
+                    with open('ollama_proxy_server/server_admin.html', 'r', encoding='utf-8') as f:
+                        file_contents = f.read()
+                    self.send_simple_response(file_contents.encode('utf-8'), 200, "text/html")
+                elif stripped_path in ["/local/get_settings"]:
+                    # Remove objects that cannot be serialized
+                    def default(o):
+                        return ""
+                    self.send_simple_response(json.dumps(self.servers, default=default).encode('utf-8'), 200)
+                elif stripped_path in ["/local/push_settings"]:
+                    self.servers = post_data_dict
+                    for server in self.servers:
+                        server[1]["queue"] = Queue()
+                    RequestHandler.servers = self.servers
+                    returnData = {"status": "success", "message": "Server data updated successfully."}
+                    self.send_simple_response(json.dumps(returnData).encode('utf-8'), 200)
+                    write_config(args.config, self.servers)
+                elif stripped_path in ["/local/download_stats"]:
+                    with open(self.log_path, 'r', encoding='utf-8') as f:
+                        file_contents = f.readlines()
+                    self.send_simple_response('\n'.join(file_contents).encode('utf-8'), 200, "text/csv")
+                elif stripped_path in ["/local/json_stats"]:
+                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', names=CSV_HEADER)
+                    self.send_simple_response(str(data.to_json()).encode("utf-8"), 200)
+                elif stripped_path in ["/local/user_dump"]:
+                    data = self.authorized_users
+                    self.send_simple_response(json.dumps(data).encode("utf-8"), 200)
+                elif stripped_path in ["/local/user_update"]:
+                    self.authorized_users = post_data_dict
+                    RequestHandler.authorized_users = self.authorized_users
+                    data = pd.read_json(StringIO(post_data.decode('utf-8'))).transpose()
+                    data['models'] = data['models'].apply(lambda x: ','.join(map(str, x)))
+                    data.to_csv(args.users_list, sep=';', header=False, columns=["key", "role", "models"])
+                    returnData = {"status": "success", "message": "User data updated successfully."}
+                    self.send_simple_response(json.dumps(returnData).encode('utf-8'), 200)
             else:
                 logger.warning("Not recognized path, running : %s", stripped_path)
                 # For other endpoints, mirror the request to the default server with retries

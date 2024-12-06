@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login</title>
+    <script>
+        function setCookie(name, value, days) {
+            const date = new Date();
+            date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+            const expires = "expires=" + date.toUTCString();
+            document.cookie = name + "=" + value + ";" + expires + ";path=/";
+        }
+
+        function login() {
+            const authToken = document.getElementById("authToken").value;
+            setCookie("auth_token", authToken, 1);
+            alert("Authentication cookie set. Redirecting to view stats...");
+            window.location.href = "/local/view_stats";
+        }
+    </script>
+</head>
+<body>
+    <h2>Login</h2>
+    <form onsubmit="login(); return false;">
+        <label for="authToken">Authentication Token:</label>
+        <input type="text" id="authToken" name="authToken" required>
+        <button type="submit">Login</button>
+    </form>
+</body>
+</html>
