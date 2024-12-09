@@ -31,6 +31,3 @@ ENV PYTHONUNBUFFERED=1
 
 # Start the proxy server as entrypoint
 ENTRYPOINT ["ollama_proxy_server"]
-
-# Set command line parameters
-CMD
