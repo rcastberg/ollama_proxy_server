@@ -33,4 +33,4 @@ ENV PYTHONUNBUFFERED=1
 ENTRYPOINT ["ollama_proxy_server"]
 
 # Set command line parameters
-CMD ["--config", "/config/config.ini", "--users_list", "/config/authorized_users.txt", "--port", "8000"]
+CMD
