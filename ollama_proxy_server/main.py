@@ -154,6 +154,7 @@ def get_version():
 
 
 def parse_args(home_folder=""):
+    logger.debug("Arg parser, home folder: %s", home_folder)
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config", default=os.path.join(home_folder, "config.ini"), help="Path to the config file"
