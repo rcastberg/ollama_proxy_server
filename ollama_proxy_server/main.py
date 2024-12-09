@@ -112,7 +112,7 @@ def get_authorized_users(filename, users_env=None):
         file_lines = []
     authorized_users_file = read_users_from_lines(file_lines, filename)
     if users_env:
-        lines = re.split('[|,\n]', users_env)
+        lines = re.split('[|\n]', users_env)
         authorized_users_env = read_users_from_lines(lines, 'Env')
     else:
         authorized_users_env = {}
@@ -832,8 +832,12 @@ def main_loop():
                         file_contents = f.readlines()
                     self.send_simple_response('\n'.join(file_contents).encode('utf-8'), 200, "text/csv")
                 elif stripped_path in ["/local/json_stats"]:
-                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', names=CSV_HEADER)
-                    self.send_simple_response(str(data.to_json()).encode("utf-8"), 200)
+                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', header=0, names=CSV_HEADER)
+                    # Filter to hour level and remove data with no tokens or valid users.
+                    data['date'] = pd.to_datetime(data['time_stamp'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
+                    data = data[((data["input_tokens"] > 0) | (data["input_tokens"] > 0))]  # & (data['user_name'].isin(self.authorized_users.keys()))]
+                    data = data.groupby('user_name').resample('1h', on='date').sum()[['input_tokens', 'output_tokens']].reset_index().rename(columns={'date': 'time_stamp'})
+                    self.send_simple_response(str(data.to_json(date_format="iso")).encode("utf-8"), 200)
                 elif stripped_path in ["/local/user_dump"]:
                     data = self.authorized_users
                     self.send_simple_response(json.dumps(data).encode("utf-8"), 200)

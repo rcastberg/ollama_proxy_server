@@ -60,15 +60,15 @@
             originalData = Object.keys(data.time_stamp).map(key => {
                 return {
                     time_stamp: data.time_stamp[key],
-                    event: data.event[key],
+                    // event: data.event[key],
                     user_name: data.user_name[key],
-                    ip_address: data.ip_address[key],
-                    access: data.access[key],
-                    server: data.server[key],
-                    nb_queued_requests_on_server: data.nb_queued_requests_on_server[key],
+                    //ip_address: data.ip_address[key],
+                    // access: data.access[key],
+                    // server: data.server[key],
+                    // nb_queued_requests_on_server: data.nb_queued_requests_on_server[key],
                     input_tokens: data.input_tokens[key],
                     output_tokens: data.output_tokens[key],
-                    error: data.error[key]
+                    //error: data.error[key]
                 };
             });
             filteredData = originalData; // Initially show all data
