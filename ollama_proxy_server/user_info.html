@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Info</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+        }
+        h1 {
+            color: #333;
+        }
+        .info {
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            max-width: 600px;
+            margin: auto;
+        }
+        .info p {
+            font-size: 16px;
+            color: #555;
+        }
+        .models-list {
+            padding-left: 20px;
+        }
+        .checkbox-container {
+            margin-bottom: 15px;
+        }
+    </style>
+    <script src="/local/sidebar.js" defer></script>
+</head>
+<body>
+    <div id="wrapper">
+        <div id="content">
+            <h1>User Information</h1>
+            <div id="user-info" class="info">
+                <p>Loading user data...</p>
+            </div>
+
+            <script>
+                // Fetch the user information from /local/user_info
+                fetch('/local/user_info')
+                    .then(response => response.json())
+                    .then(data => {
+                        // Get the user info container
+                        const userInfoDiv = document.getElementById('user-info');
+
+                        // Build the user info content dynamically
+                        userInfoDiv.innerHTML = `
+                            <p><strong>Name:</strong> ${data.username}</p>
+                            <p><strong>Role:</strong> ${data.role}</p>
+                            <div class="checkbox-container">
+                                <input type="checkbox" id="all-models" ${data.all_models ? 'checked' : ''} disabled>
+                                <label for="all-models"><strong>Access to All Models</strong></label>
+                            </div>
+                            <p><strong>Specifically the models available to you (Server dependent):</strong></p>
+                            <ul class="models-list">
+                                ${data.models.map(model => `<li>${model}</li>`).join('')}
+                            </ul>
+                        `;
+                    })
+                    .catch(error => {
+                        // If there is an error fetching the data, show a message
+                        const userInfoDiv = document.getElementById('user-info');
+                        userInfoDiv.innerHTML = `
+                            <p style="color: red;">Error fetching user data. Please try again later.</p>
+                        `;
+                        console.error('Error fetching user info:', error);
+                    });
+            </script>
+        </div>
+    </div>
+</body>
+</html>

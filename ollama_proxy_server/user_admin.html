@@ -27,7 +27,7 @@
             margin-top: 10px;
         }
     </style>
-    <script src="/admin/sidebar.js" defer></script>
+    <script src="/local/sidebar.js" defer></script>
 </head>
 <body>
     <div id="wrapper">
@@ -187,21 +187,23 @@
 
             userCard.appendChild(document.createElement('br')); // Line break for spacing
 
-            // Key Display
-            const keyLabel = document.createElement('label');
-            keyLabel.innerText = 'Key: ';
-            userCard.appendChild(keyLabel);
+            // Token Editable Input
+            const tokenLabel = document.createElement('label');
+            tokenLabel.innerText = 'Token: ';
+            userCard.appendChild(tokenLabel);
 
-            const keyDisplay = document.createElement('span');
-            keyDisplay.innerText = data.key;
-            keyDisplay.style.marginRight = '10px';
-            userCard.appendChild(keyDisplay);
+            const tokenInput = document.createElement('input');
+            tokenInput.type = 'text';
+            tokenInput.value = data.key;
+            tokenInput.style.marginRight = '10px';
+            tokenInput.oninput = (e) => data.key = e.target.value; // Save changes dynamically
+            userCard.appendChild(tokenInput);
 
             const regenerateButton = document.createElement('button');
             regenerateButton.innerText = 'Regenerate Key';
             regenerateButton.onclick = () => {
                 data.key = generateHexKey();
-                keyDisplay.innerText = data.key;
+                tokenInput.value = data.key; // Update input value
             };
             userCard.appendChild(regenerateButton);
 

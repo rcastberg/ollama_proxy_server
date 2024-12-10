@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token Usage Over Time</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daterangepicker/daterangepicker.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.2/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/daterangepicker/daterangepicker.min.js"></script>
+    <script src="https://code.highcharts.com/highcharts.js"></script>
+    <script src="https://code.highcharts.com/modules/exporting.js"></script>
+    <script src="https://code.highcharts.com/modules/export-data.js"></script>
+    <script src="/local/sidebar.js" defer></script>
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+</head>
+<body>
+    <div id="wrapper">
+        <div id="content">
+    <h1>Token Usage Over Time</h1>
+
+    <div id="filters" style="margin-top: 20px;">
+        <input type="text" id="date-range" name="date-range" style="margin-right: 15px;">
+
+        <label for="user-select">Select Users:</label>
+        <select id="user-select" multiple="multiple" style="width: 300px; margin-right: 15px;">
+            <!-- User options will be dynamically populated -->
+        </select>
+
+        <label for="display-mode">Display Mode:</label>
+        <select id="display-mode">
+            <option value="individual">Individual Users</option>
+            <option value="cumulative-per-user">Cumulative Per User</option>
+            <option value="total-cumulative" selected>Total Cumulative</option> <!-- Default -->
+        </select>
+
+        <button id="apply-filters" style="margin-left: 15px;">Apply Filters</button>
+
+    <div id="container" style="width: 100%; height: 600px; margin-bottom: 20px;"></div>
+    </div>
+
+    <script>
+        $(document).ready(function () {
+            const endpoint = '/local/json_stats';
+            let rawData = null;
+
+            // Initialize Select2
+            $('#user-select').select2({
+                placeholder: "Select users",
+                allowClear: true,
+                width: '300px'
+            });
+
+            // Initialize date range picker
+            $('#date-range').daterangepicker({
+                opens: 'left',
+                startDate: "2024/01/01",
+                endDate: "2024/12/31",
+                locale: {
+                    format: 'YYYY-MM-DD',
+                    separator: " - ",
+                    cancelLabel: "Cancel",
+                },
+                ranges: {
+                    'Today': [moment(), moment()],
+                    'Yesterday': [moment().subtract(1, 'days'), moment().subtract(1, 'days')],
+                    'Last 7 Days': [moment().subtract(6, 'days'), moment()],
+                    'Last 30 Days': [moment().subtract(29, 'days'), moment()],
+                    'This Month': [moment().startOf('month'), moment().endOf('month')],
+                    'Last Month': [moment().subtract(1, 'month').startOf('month'), moment().subtract(1, 'month').endOf('month')],
+                    'All Time': [moment("2024-01-01"), moment()]
+                },
+                timePicker: true,
+                alwaysShowCalendars: true,
+                timePicker24Hour: true,
+            });
+
+            // Function to fetch data from the endpoint
+            function fetchData() {
+                return $.getJSON(endpoint).done((data) => {
+                    rawData = data;
+                    populateUserOptions(data.user_name);
+                    applyDefaultFilters();
+                });
+            }
+
+            // Populate user selection dropdown
+            function populateUserOptions(userNameData) {
+                const uniqueUsers = [...new Set(Object.values(userNameData))];
+                const userSelect = $('#user-select');
+                userSelect.empty(); // Clear any existing options
+                uniqueUsers.forEach(user => {
+                    userSelect.append(new Option(user, user, true, true)); // Select all by default
+                });
+                userSelect.trigger('change'); // Refresh Select2
+            }
+
+            // Apply default filters (all users, last 30 days, Total Cumulative mode)
+            function applyDefaultFilters() {
+                updateChart(getFilters());
+            }
+
+            // Get selected filters
+            function getFilters() {
+                const selectedUsers = $('#user-select').val();
+                const dateRange = $('#date-range').data('daterangepicker');
+                const startDate = dateRange.startDate.format('YYYY-MM-DD');
+                const endDate = dateRange.endDate.format('YYYY-MM-DD');
+                const displayMode = $('#display-mode').val();
+                return { startDate, endDate, selectedUsers, displayMode };
+            }
+
+            // Filter and process data for chart
+            function processData(filters) {
+                const { startDate, endDate, selectedUsers, displayMode } = filters;
+                const { user_name, time_stamp, input_tokens, output_tokens } = rawData;
+
+                const filteredData = Object.keys(user_name).filter(key => {
+                    const user = user_name[key];
+                    const timestamp = new Date(time_stamp[key]);
+                    const isWithinDateRange = (!startDate || timestamp >= new Date(startDate)) &&
+                        (!endDate || timestamp <= new Date(endDate));
+                    return selectedUsers.includes(user) && isWithinDateRange;
+                });
+
+                if (displayMode === 'individual') {
+                    const seriesData = {};
+                    filteredData.forEach(key => {
+                        const user = user_name[key];
+                        if (!seriesData[user]) seriesData[user] = [];
+                        seriesData[user].push({
+                            x: new Date(time_stamp[key]).getTime(),
+                            y: input_tokens[key] + output_tokens[key]
+                        });
+                    });
+                    return Object.entries(seriesData).map(([name, data]) => ({
+                        name,
+                        data: data.sort((a, b) => a.x - b.x)
+                    }));
+                } else if (displayMode === 'cumulative-per-user') {
+                    const seriesData = {};
+                    filteredData.forEach(key => {
+                        const user = user_name[key];
+                        if (!seriesData[user]) seriesData[user] = [];
+                        const lastValue = seriesData[user].length
+                            ? seriesData[user][seriesData[user].length - 1].y
+                            : 0;
+                        seriesData[user].push({
+                            x: new Date(time_stamp[key]).getTime(),
+                            y: lastValue + input_tokens[key] + output_tokens[key]
+                        });
+                    });
+                    return Object.entries(seriesData).map(([name, data]) => ({
+                        name,
+                        data: data.sort((a, b) => a.x - b.x)
+                    }));
+                } else if (displayMode === 'total-cumulative') {
+                    const timestampMap = {};
+
+                    // Aggregate tokens by timestamp
+                    filteredData.forEach(key => {
+                        const timestamp = new Date(time_stamp[key]).getTime();
+                        const tokens = input_tokens[key] + output_tokens[key];
+                        timestampMap[timestamp] = (timestampMap[timestamp] || 0) + tokens;
+                    });
+
+                    // Create an array of timestamps and tokens, sorted by time
+                    const sortedTimestamps = Object.keys(timestampMap)
+                        .map(ts => ({ x: parseInt(ts), y: timestampMap[ts] }))
+                        .sort((a, b) => a.x - b.x);
+
+                    // Calculate cumulative sum
+                    let cumulativeSum = 0;
+                    const totalCumulativeData = sortedTimestamps.map(point => {
+                        cumulativeSum += point.y;
+                        return { x: point.x, y: cumulativeSum };
+                    });
+
+                    return [{ name: 'Total Cumulative', data: totalCumulativeData }];
+                }
+            }
+
+            // Initialize or update chart
+            function updateChart(filters) {
+                const seriesData = processData(filters);
+                Highcharts.chart('container', {
+                    chart: {
+                        type: 'line'
+                    },
+                    title: {
+                        text: 'Token Usage Over Time'
+                    },
+                    xAxis: {
+                        type: 'datetime',
+                        title: {
+                            text: 'Time'
+                        }
+                    },
+                    yAxis: {
+                        title: {
+                            text: 'Tokens'
+                        }
+                    },
+                    series: seriesData,
+                    plotOptions: {
+                        series: {
+                            marker: {
+                                enabled: true
+                            }
+                        }
+                    },
+                    credits: {
+                        enabled: false
+                    }
+                });
+            }
+
+            // Attach change event listeners for automatic updates
+            $('#user-select, #display-mode').on('change', function () {
+                updateChart(getFilters());
+            });
+
+            $('#date-range').on('apply.daterangepicker', function () {
+                updateChart(getFilters());
+            });
+
+            // Fetch data and initialize page
+            fetchData();
+        });
+    </script>
+    </div></div>
+</body>
+</html>

@@ -550,38 +550,27 @@ def main_loop():
             cookie_header = self.headers.get("Cookie")
             cookies = SimpleCookie(cookie_header)
             self.cookie_auth_token = cookies.get("auth_token")
-            if (len(path) > 1) & (path[-1] == "/"):
-                path = path[:-1]
+
             if path == "/":
                 self.send_simple_response(b"Ollama is running")
                 return
             elif path == "/health":
                 self.send_simple_response(b"OK")
                 return
-            elif "/admin" in path:
-                match = re.search(r'^\/admin\/([A-Za-z]+\.[A-Za-z]{2,4})$', path)
-                if match:
-                    with open("ollama_proxy_server/" + match.group(1), "r", encoding="utf-8") as f:
-                        file_contents = f.read()
-                    self.send_simple_response(file_contents.encode("utf-8"), 200, MIME_TYPES[path.split('.')[-1]])
+            elif path.startswith("/local"):
+                # Check if user is authenticated, if not redirect to login page
+                if self._validate_user_and_key():
+                    if path == "/local/login":
+                        self.send_response(302)
+                        self.send_header("Location", "/local/view_stats.html")
+                        self.end_headers()
+                        self.wfile.write("Redirecting to stats page".encode("utf-8"))
+                        return
                 else:
-                    # redirect to login page
-                    self.send_response(302)
-                    self.send_header("Location", "/local/login")
-                    self.end_headers()
-                    self.wfile.write("Redirecting to login page".encode("utf-8"))
-                return
-            elif path == "/local/login":
-                if self.cookie_auth_token and self._validate_user_and_key():
-                    self.send_response(302)
-                    self.send_header("Location", "/local/view_stats")
-                    self.end_headers()
-                    self.wfile.write(b"Redirecting to stats page".encode("utf-8"))
+                    with open("ollama_proxy_server/login.html", "r", encoding="utf-8") as f:
+                        file_contents = f.read()
+                    self.send_simple_response(file_contents.encode("utf-8"), 200, "text/html")
                     return
-                with open("ollama_proxy_server/login.html", "r", encoding="utf-8") as f:
-                    file_contents = f.read()
-                self.send_simple_response(file_contents.encode("utf-8"), 200, "text/html")
-                return
             if not self._validate_user_and_key():
                 logger.warning("User is not authorized")
                 client_ip, client_port = self.client_address
@@ -790,65 +779,95 @@ def main_loop():
                 model_info = get_available_models(self, path, get_params, post_data_dict, backend_headers, filtered_list=True)
                 model_info = json.dumps(model_info).encode("utf-8")
                 self.send_simple_response(model_info)
-            elif stripped_path in ["/api/full_tags"]:
+            elif stripped_path == "/api/full_tags":
                 model_info = get_available_models(self, "/api/tags", get_params, post_data_dict, backend_headers, filtered_list=False)
                 model_info = json.dumps(model_info).encode("utf-8")
                 self.send_simple_response(model_info)
             elif stripped_path in ["/api/pull", "/api/delete", "/api/push",
                                    "/api/copy", "/api/create"]:
                 self.send_simple_response("Unsupported in proxy", 503)
-            elif stripped_path in ["/api/ps"]:
+            elif stripped_path == "/api/ps":
                 server_ps = get_running_models(self, path, get_params, post_data_dict, backend_headers)
                 server_ps = json.dumps(server_ps).encode("utf-8")
                 self.send_simple_response(server_ps)
-            elif self.role == "admin":
-                if stripped_path in ["/local/view_stats"]:
-                    with open('ollama_proxy_server/access_log.html', 'r', encoding='utf-8') as f:
+            elif stripped_path.startswith("/local") and (self.role == "user" or self.role == "admin"):
+                match = re.search(r'^\/local\/([A-Za-z_-]+\.(html|js))$', path)
+                if match:
+                    with open("ollama_proxy_server/" + match.group(1), "r", encoding="utf-8") as f:
                         file_contents = f.read()
-                    self.send_simple_response(file_contents.encode('utf-8'), 200, "text/html")
-                elif stripped_path in ["/local/user_admin"]:
-                    with open('ollama_proxy_server/user_admin.html', 'r', encoding='utf-8') as f:
-                        file_contents = f.read()
-                    self.send_simple_response(file_contents.encode('utf-8'), 200, "text/html")
-                elif stripped_path in ["/local/server_admin"]:
-                    with open('ollama_proxy_server/server_admin.html', 'r', encoding='utf-8') as f:
-                        file_contents = f.read()
-                    self.send_simple_response(file_contents.encode('utf-8'), 200, "text/html")
-                elif stripped_path in ["/local/get_settings"]:
-                    # Remove objects that cannot be serialized
-                    def default(o):
-                        return ""
-                    self.send_simple_response(json.dumps(self.servers, default=default).encode('utf-8'), 200)
-                elif stripped_path in ["/local/push_settings"]:
-                    self.servers = post_data_dict
-                    for server in self.servers:
-                        server[1]["queue"] = Queue()
-                    RequestHandler.servers = self.servers
-                    returnData = {"status": "success", "message": "Server data updated successfully."}
-                    self.send_simple_response(json.dumps(returnData).encode('utf-8'), 200)
-                    write_config(args.config, self.servers)
-                elif stripped_path in ["/local/download_stats"]:
-                    with open(self.log_path, 'r', encoding='utf-8') as f:
-                        file_contents = f.readlines()
-                    self.send_simple_response('\n'.join(file_contents).encode('utf-8'), 200, "text/csv")
-                elif stripped_path in ["/local/json_stats"]:
+                    self.send_simple_response(file_contents.encode("utf-8"), 200, MIME_TYPES[path.split('.')[-1]])
+                    return
+                elif stripped_path in ["/local/user_info"]:
+                    user_info = self.authorized_users[self.user].copy()
+                    del user_info['key']
+                    models = get_available_models(self, "/api/tags", get_params, post_data_dict, backend_headers, filtered_list=True)
+                    models = [m['name'] for m in models['models']]
+                    user_info['models'] = models
+                    user_info['username'] = self.user
+                    user_info['all_models'] = True if '*' in self.models else False
+                    self.send_simple_response(json.dumps(user_info).encode("utf-8"), 200)
+                    return
+                elif stripped_path in ["/local", "/local/"]:
+                    self.send_response(302)
+                    self.send_header("Location", "/local/view_stats.html")
+                    self.end_headers()
+                    self.wfile.write("Redirecting to stats page".encode("utf-8"))
+                elif (stripped_path in ["/local/get_settings"]):
+                    if self.role == "admin":
+                        # Remove objects that cannot be serialized
+                        def default(o):
+                            return ""
+                        self.send_simple_response(json.dumps(self.servers, default=default).encode('utf-8'), 200)
+                        return
+                elif (stripped_path in ["/local/push_settings"]):
+                    if self.role == "admin":
+                        self.servers = post_data_dict
+                        for server in self.servers:
+                            server[1]["queue"] = Queue()
+                        RequestHandler.servers = self.servers
+                        returnData = {"status": "success", "message": "Server data updated successfully."}
+                        self.send_simple_response(json.dumps(returnData).encode('utf-8'), 200)
+                        write_config(args.config, self.servers)
+                        return
+                elif (stripped_path in ["/local/download_stats"]):
+                    if self.role == "admin":
+                        with open(self.log_path, 'r', encoding='utf-8') as f:
+                            file_contents = f.readlines()
+                        self.send_simple_response('\n'.join(file_contents).encode('utf-8'), 200, "text/csv")
+                        return
+                elif (stripped_path in ["/local/json_stats"]):
                     data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', header=0, names=CSV_HEADER)
                     # Filter to hour level and remove data with no tokens or valid users.
                     data['date'] = pd.to_datetime(data['time_stamp'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
                     data = data[((data["input_tokens"] > 0) | (data["input_tokens"] > 0))]  # & (data['user_name'].isin(self.authorized_users.keys()))]
                     data = data.groupby('user_name').resample('1h', on='date').sum()[['input_tokens', 'output_tokens']].reset_index().rename(columns={'date': 'time_stamp'})
+                    # Remove data with no tokens
+                    data = data[(data['input_tokens'] != 0) & (data['output_tokens'] != 0)]
+                    # For non admin users anonmize the data for other users.
+                    if self.role != "admin":
+                        data.loc[data["user_name"] != self.user, "user_name"] = "Others"
                     self.send_simple_response(str(data.to_json(date_format="iso")).encode("utf-8"), 200)
-                elif stripped_path in ["/local/user_dump"]:
-                    data = self.authorized_users
-                    self.send_simple_response(json.dumps(data).encode("utf-8"), 200)
-                elif stripped_path in ["/local/user_update"]:
-                    self.authorized_users = post_data_dict
-                    RequestHandler.authorized_users = self.authorized_users
-                    data = pd.read_json(StringIO(post_data.decode('utf-8'))).transpose()
-                    data['models'] = data['models'].apply(lambda x: ','.join(map(str, x)))
-                    data.to_csv(args.users_list, sep=';', header=False, columns=["key", "role", "models"])
-                    returnData = {"status": "success", "message": "User data updated successfully."}
-                    self.send_simple_response(json.dumps(returnData).encode('utf-8'), 200)
+                    return
+                elif (stripped_path in ["/local/user_dump"]):
+                    if (self.role == "admin"):
+                        data = self.authorized_users
+                        self.send_simple_response(json.dumps(data).encode("utf-8"), 200)
+                        return
+                elif (stripped_path in ["/local/user_update"]):
+                    if (self.role == "admin"):
+                        self.authorized_users = post_data_dict
+                        RequestHandler.authorized_users = self.authorized_users
+                        data = pd.read_json(StringIO(post_data.decode('utf-8'))).transpose()
+                        data['models'] = data['models'].apply(lambda x: ','.join(map(str, x)))
+                        data.to_csv(args.users_list, sep=';', header=False, columns=["key", "role", "models"])
+                        returnData = {"status": "success", "message": "User data updated successfully."}
+                        self.send_simple_response(json.dumps(returnData).encode('utf-8'), 200)
+                        return
+                else:
+                    self.send_simple_response(b"Page not found", 404, "text/plain")
+                    return
+                self.send_simple_response(b"Unauthorized", 403)
+                return
             else:
                 logger.warning("Not recognized path, running : %s", stripped_path)
                 # For other endpoints, mirror the request to the default server with retries
