@@ -557,6 +557,19 @@ def main_loop():
             elif path == "/health":
                 self.send_simple_response(b"OK")
                 return
+            elif path == "/favicon.ico":
+                favicon_path = "ollama_proxy_server/favicon.ico"
+                if os.path.exists(favicon_path):
+                    with open(favicon_path, "rb") as f:
+                        favicon_data = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/x-icon")
+                    self.send_header("Content-Length", str(len(favicon_data)))
+                    self.end_headers()
+                    self.wfile.write(favicon_data)
+                else:
+                    self.send_simple_response(b"Favicon not found", 404, "text/plain")
+                return
             elif path.startswith("/local"):
                 # Check if user is authenticated, if not redirect to login page
                 if self._validate_user_and_key():
@@ -793,9 +806,12 @@ def main_loop():
             elif stripped_path.startswith("/local") and (self.role == "user" or self.role == "admin"):
                 match = re.search(r'^\/local\/([A-Za-z_-]+\.(html|js))$', path)
                 if match:
-                    with open("ollama_proxy_server/" + match.group(1), "r", encoding="utf-8") as f:
-                        file_contents = f.read()
-                    self.send_simple_response(file_contents.encode("utf-8"), 200, MIME_TYPES[path.split('.')[-1]])
+                    try:
+                        with open("ollama_proxy_server/" + match.group(1), "r", encoding="utf-8") as f:
+                            file_contents = f.read()
+                        self.send_simple_response(file_contents.encode("utf-8"), 200, MIME_TYPES[path.split('.')[-1]])
+                    except FileNotFoundError:
+                        self.send_simple_response(b"No such file", 404, "text/plain")
                     return
                 elif stripped_path in ["/local/user_info"]:
                     user_info = self.authorized_users[self.user].copy()

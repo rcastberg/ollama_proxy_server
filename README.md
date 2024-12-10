@@ -73,3 +73,7 @@ curl -X POST -H "Authorization: Bearer user1:key1" http://localhost:8080/api/gen
 To start the proxy in background with the above created image, you can use either
 1) docker: `docker run -d --name ollama-proxy-server -p 8080:8080 ollama_proxy_server:latest`
 2) podman: `podman run -d --name ollama-proxy-server -p 8080:8080 ollama_proxy_server:latest`
+
+#Favicon.ico
+
+https://favicon.io/emoji-favicons/books

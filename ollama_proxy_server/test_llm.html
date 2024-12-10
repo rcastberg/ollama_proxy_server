@@ -1,0 +1,92 @@
+        <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Selection and Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .form-container {
+            max-width: 600px;
+            margin: auto;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        select, input[type="text"], button {
+            width: 100%;
+            padding: 10px;
+            font-size: 1rem;
+        }
+        .toggle {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .toggle input {
+            margin-right: 10px;
+        }
+        .output {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            background-color: #f9f9f9;
+        }
+        .timer {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        textarea {
+            width: 100%;
+            font-size: 1rem;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/local/sidebar.js" defer></script>
+</head>
+<body>
+    <div id="wrapper">
+        <div id="content">
+    <div class="form-container">
+        <h1>Model Selector & Chat</h1>
+        <div class="form-group">
+            <label for="model">Select Model:</label>
+            <select id="model" required>
+                <option value="" disabled selected>Loading models...</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="question">Enter your question:</label>
+            <textarea id="question" placeholder="Type your question here..." rows="1" style="resize: none;"></textarea>
+        </div>
+            <div class="toggle">
+            <input type="checkbox" id="streamToggle">
+            <label for="streamToggle">Enable Streaming Response</label>
+        </div>
+        <div class="form-group">
+            <button id="submit" onclick="submitQuestion()">Submit</button>
+        </div>
+        <div class="output" id="output">
+            <strong>Response:</strong>
+            <div id="response">Waiting for a question...</div>
+        </div>
+        <div class="output" id="output">
+            <strong>Metrics:</strong>
+            <div id="metrics"></div>
+            <div class="timer" id="timer"></div>
+        </div>
+    </div>
+</div></div>
+    <script src="/local/test_llm.js" defer></script>
+</body>
+</html>
