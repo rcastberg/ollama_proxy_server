@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Info</title>
+    <script src="/local/sidebar.js" defer></script>
+    <script>
+        async function fetchServerInfo() {
+            try {
+                const response = await fetch('/local/server_info');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                document.getElementById('version').textContent = data.Version;
+                document.getElementById('gitHash').textContent = data['Git-Hash'];
+            } catch (error) {
+                console.error('Error fetching server info:', error);
+                document.getElementById('error').textContent = 'Failed to fetch server info.';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', fetchServerInfo);
+    </script>
+</head>
+<body>
+    <div id="wrapper">
+        <div id="content">
+    <h1>Server Information</h1>
+    <p><strong>Version:</strong> <span id="version">Loading...</span></p>
+    <p><strong>Git Hash:</strong> <span id="gitHash">Loading...</span></p>
+    <p id="error" style="color: red;"></p>
+    </div></div>
+</body>
+</html>

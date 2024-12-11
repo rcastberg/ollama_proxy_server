@@ -7,6 +7,7 @@ window.onload = function() {
     <div id="sidebar">
       <ul>
         <!-- These links will be added conditionally -->
+        <li><a href="/local/user_info.html">Server Info</a></li>
         <li id="user-admin-link" style="display: none;"><a href="/local/user_admin.html">User Admin</a></li>
         <li id="server-admin-link" style="display: none;"><a href="/local/server_admin.html">Server Admin</a></li>
         <li><a href="/local/user_info.html">User info</a></li>

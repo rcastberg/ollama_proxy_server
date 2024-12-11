@@ -468,7 +468,7 @@ def main_loop():
                     logging.error("An unexpected error occurred: %s", str(e))
                 eval_info = get_streamed_token_count(llm_response, chat_gpt, len(llm_response))
             t1 = time.time()
-            if eval_info['total_duration'] == 0:
+            if ('total_duration' not in eval_info) or (eval_info['total_duration'] == 0):
                 eval_info['total_duration'] = t1 - t0
             logger.debug('Eval_count %s', str(eval_info))
             logger.debug("Curl string: %s", self.curl_string)
@@ -530,6 +530,7 @@ def main_loop():
         def send_request_with_retries(
             self, server_info, path, get_params, post_data_dict, backend_headers
         ):
+            logger.debug("Backend headers: %s", backend_headers)
             for attempt in range(self.retry_attempts):
                 try:
                     # Send request to backend server with timeout
@@ -840,6 +841,10 @@ def main_loop():
                         self.send_simple_response(file_contents.encode("utf-8"), 200, MIME_TYPES[path.split('.')[-1]])
                     except FileNotFoundError:
                         self.send_simple_response(b"No such file", 404, "text/plain")
+                    return
+                elif stripped_path == "/local/server_info":
+                    version_info = {key.strip(): value.strip() for key, value in (item.split(':') for item in get_version().split(','))}
+                    self.send_simple_response(json.dumps(version_info).encode("utf-8"), 200)
                     return
                 elif stripped_path in ["/local/user_info"]:
                     user_info = self.authorized_users[self.user].copy()
