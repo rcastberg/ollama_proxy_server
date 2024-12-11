@@ -95,7 +95,8 @@ class TestRestAPI(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        # Stop the backend server
+        # Stop the backend server, allow it to finsish serving first.
+        time.sleep(10)
         logger.debug("Stopping Proxy Server")
         os.kill(cls.backend_process.pid, signal.SIGTERM)
         cls.backend_process.wait()

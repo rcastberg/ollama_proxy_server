@@ -15,6 +15,7 @@ from queue import Queue
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -33,7 +34,12 @@ CSV_HEADER = [
     "nb_queued_requests_on_server",
     "input_tokens",
     "output_tokens",
-    "error"
+    "error",
+    "model",
+    "load_duation",
+    "prompt_eval_duration",
+    "eval_duration",
+    "total_duration"
 ]
 
 MIME_TYPES = {'html': 'text/html', 'js': 'text/javascript', 'css': 'text/css', 'json': 'application/json', 'txt': 'text/plain'}
@@ -296,6 +302,11 @@ def add_access_log_entry(
     error="",
     input_tokens=0,
     output_tokens=0,
+    model="",
+    load_duration=0,
+    prompt_eval_duration=0,
+    eval_duration=0,
+    total_duration=0,
 ):
     log_file_path = Path(log_path)
     logger.debug("Adding log entry")
@@ -321,39 +332,50 @@ def add_access_log_entry(
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "error": error,
+            "model": model,
+            "load_duation": load_duration,
+            "prompt_eval_duration": prompt_eval_duration,
+            "eval_duration": eval_duration,
+            "total_duration": total_duration,
         }
         logger.debug("Log: %s", str(row))
         writer.writerow(row)
 
 
 def get_streamed_token_count(chunks, chatgpt=False, count=0):
+    eval_info = {}
     # Check if chatgpt api
     if type(chunks) is list:
         chunks = b','.join(chunks)
     if chatgpt:
         # Use regex as eval_count is not always in a valid json message
-        eval_count_pattern = re.compile(rb'"completion_tokens":(\d+)')
-        prompt_eval_count_pattern = re.compile(rb'"prompt_tokens":(\d+)')
+        # ChatGPT doesn't provide the durations, but we need populate the dictionary
+        # rb'(?!x)x' should be a fast match that doesn't match anything looking for x and not x
+        patterns = {"eval_count": (rb'"completion_tokens":(\d+)', 1, int),
+                    "prompt_count": (rb'"prompt_tokens":(\d+)', 1, int),
+                    "load_duation": (rb'(?!x)x', 1e9, float),
+                    "prompt_eval_duration": (rb'(?!x)x', 1e9, float),
+                    "eval_duration": (rb'(?!x)x', 1e9, float),
+                    "total_duration": (rb'(?!x)x', 1e9, float)
+                    }
         # Search for the pattern in the data
     else:
         # Use regex as eval_count is not always in a valid json message
-        eval_count_pattern = re.compile(rb'"eval_count":(\d+)')
-        prompt_eval_count_pattern = re.compile(rb'"prompt_eval_count":(\d+)')
+        patterns = {"eval_count": (rb'"eval_count":(\d+)', 1, int),
+                    "prompt_count": (rb'"prompt_eval_count":(\d+)', 1, int),
+                    "load_duation": (rb'"load_duration":(\d+)', 1e9, float),
+                    "prompt_eval_duration": (rb'"prompt_eval_duration":(\d+)', 1e9, float),
+                    "eval_duration": (rb'"eval_duration":(\d+)', 1e9, float),
+                    "total_duration": (rb'"total_duration":(\d+)', 1e9, float)
+                    }
 
-    # Search for the pattern in the data
-    eval_count_match = eval_count_pattern.search(chunks)
-    prompt_eval_count_match = prompt_eval_count_pattern.search(chunks)
-
-    if eval_count_match:
-        eval_count = int(eval_count_match.group(1))
-    else:
-        logger.info('Unable to find eval_count in response')
-        eval_count = count
-    if prompt_eval_count_match:
-        prompt_count = int(prompt_eval_count_match.group(1))
-    else:
-        prompt_count = 0
-    return eval_count, prompt_count
+    for key, (pattern, divisor, convert_type) in patterns.items():
+        match = re.findall(pattern, chunks)
+        if match:
+            eval_info[key] = convert_type(int(match[0]) / divisor)
+        else:
+            eval_info[key] = 0
+    return eval_info
 
 
 def main_loop():
@@ -393,8 +415,8 @@ def main_loop():
             # Send the response to the client
             # Calculate the number of tokens, and if not returned by ollama
             # return the number of words as a rough estimate.
-            eval_count = 0
-            prompt_count = 0
+            eval_info = {}
+            t0 = time.time()
             if stream:
                 self.send_response(response.status_code)
                 for key, value in response.headers.items():
@@ -420,7 +442,7 @@ def main_loop():
                             self.wfile.flush()
                             chunks = ring_buffer(chunks, chunk)
 
-                    eval_count, prompt_count = get_streamed_token_count(chunks, chat_gpt, count)
+                    eval_info = get_streamed_token_count(chunks, chat_gpt, count)
 
                     self.wfile.write(b"0\r\n\r\n")
                 except BrokenPipeError:
@@ -444,10 +466,13 @@ def main_loop():
                     llm_response = response.content
                 except Exception as e:
                     logging.error("An unexpected error occurred: %s", str(e))
-                eval_count, prompt_count = get_streamed_token_count(llm_response, chat_gpt, len(llm_response))
-            logger.debug('Eval_count %s, Prompt_count %s', str(eval_count), str(prompt_count))
+                eval_info = get_streamed_token_count(llm_response, chat_gpt, len(llm_response))
+            t1 = time.time()
+            if eval_info['total_duration'] == 0:
+                eval_info['total_duration'] = t1 - t0
+            logger.debug('Eval_count %s', str(eval_info))
             logger.debug("Curl string: %s", self.curl_string)
-            return eval_count, prompt_count
+            return eval_info
 
         def send_simple_response(self, content, code=200, response_type="application/json"):
             self.send_response(code)
@@ -600,7 +625,7 @@ def main_loop():
                         access="Denied",
                         server="None",
                         nb_queued_requests_on_server=-1,
-                        error="Authentication failed",
+                        error="Authentication failed"
                     )
                     logger.debug("No Bearer authentication token provided")
                 else:
@@ -743,8 +768,7 @@ def main_loop():
                         self.send_simple_response(b"Server is busy. Please try again later.", 503, "text/plain")
                         return
                     # Prepare to store input and output tokens
-                    input_tokens = 0
-                    output_tokens = 0
+                    eval_info = {}
                     try:
                         # Send request with retries
                         response = self.send_request_with_retries(
@@ -759,9 +783,7 @@ def main_loop():
                                 chat_gpt = True
                             else:
                                 chat_gpt = False
-                            eval_count, prompt_count = self._send_response(response, stream=streamed_request, chat_gpt=chat_gpt)
-                            input_tokens = prompt_count
-                            output_tokens = eval_count
+                            eval_info = self._send_response(response, stream=streamed_request, chat_gpt=chat_gpt)
                             break
                         else:
                             # All retries failed, try next server
@@ -780,8 +802,13 @@ def main_loop():
                                 access="Authorized",
                                 server=min_queued_server[0],
                                 nb_queued_requests_on_server=que.qsize(),
-                                input_tokens=input_tokens,
-                                output_tokens=output_tokens,
+                                input_tokens=eval_info.get("prompt_count", 0),
+                                output_tokens=eval_info.get("eval_count", 0),
+                                model=model,
+                                load_duration=eval_info.get("load_duation", 0),
+                                prompt_eval_duration=eval_info.get("prompt_eval_duration", 0),
+                                eval_duration=eval_info.get("eval_duration", 0),
+                                total_duration=eval_info.get("total_duration", 0),
                             )
                         except Exception as e:
                             logger.debug("Write to log, Exception: %s", e)
@@ -863,6 +890,35 @@ def main_loop():
                     if self.role != "admin":
                         data.loc[data["user_name"] != self.user, "user_name"] = "Others"
                     self.send_simple_response(str(data.to_json(date_format="iso")).encode("utf-8"), 200)
+                    return
+                elif (stripped_path in ["/local/model_stats"]):
+                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', header=0, names=CSV_HEADER)
+                    # Filter to hour level and remove data with no tokens or valid users.
+                    data.index = pd.to_datetime(data['time_stamp'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
+                    # Filter the data
+                    data = data[((data["input_tokens"] > 0) | (data["input_tokens"] > 0))].copy()
+
+                    # Calculate the speed of the models
+                    data['total_speed'] = (data['input_tokens'] + data['output_tokens']) / data['total_duration']
+                    data['prompt_eval_speed'] = data['input_tokens'] / data['prompt_eval_duration']
+                    data['eval_speed'] = data['output_tokens'] / data['eval_duration']
+
+                    # Replace inf with NaN, drop unnessacary columns and convert model to category
+                    data.replace([np.inf, -np.inf], np.nan, inplace=True)
+                    data['model'] = data['model'].astype('category')
+                    data.drop(['error', 'access', 'user_name', 'event', 'ip_address', 'time_stamp'], inplace=True, axis=1)
+                    aggregated_data = data.groupby(['model', 'server'], observed=True).resample('1h')
+                    aggregated_data = aggregated_data.agg({
+                                                          'input_tokens': 'sum',
+                                                          'output_tokens': 'sum',
+                                                          'total_speed': 'mean',
+                                                          'prompt_eval_speed': 'mean',
+                                                          'eval_speed': 'mean'
+                                                          })
+                    aggregated_data = aggregated_data.reset_index().rename(columns={'date': 'time_stamp'})
+                    # Remove data with no tokens
+                    aggregated_data = aggregated_data[(aggregated_data['input_tokens'] != 0) & (aggregated_data['output_tokens'] != 0)]
+                    self.send_simple_response(str(aggregated_data.to_json(date_format="iso")).encode("utf-8"), 200)
                     return
                 elif (stripped_path in ["/local/user_dump"]):
                     if (self.role == "admin"):

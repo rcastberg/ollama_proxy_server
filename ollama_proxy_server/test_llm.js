@@ -108,7 +108,7 @@ async function fetchNonStreamedResponse(requestData, startTime) {
                 <li>Prompt Eval Duration: ${promptEvalDurationSec} seconds</li>
                 <li>Eval Count: ${result.eval_count || 'N/A'}</li>
                 <li>Eval Duration: ${evalDurationSec} seconds</li>
-                <li>Eval Speed: ${result.eval_count ? (result.eval_count / result.eval_duration).toFixed(3) : 'N/A'} tokens/sec</li>
+                <li>Eval Speed: ${result.eval_count ? (result.eval_count / evalDurationSec).toFixed(3) : 'N/A'} tokens/sec</li>
                 <li>Load Duration: ${loadDurationSec} seconds</li>
                 <li>Total Duration: ${totalDurationSec} seconds</li>
             </ul>

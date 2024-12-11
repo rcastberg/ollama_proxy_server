@@ -132,11 +132,17 @@
                 const allModels = Object.keys(serverModels[name]);
                 const selectedModels = config.models;
 
-                // Sort models: selected first, then unselected
                 const sortedModels = allModels.sort((a, b) => {
-                    if (selectedModels.includes(a) && !selectedModels.includes(b)) return -1;
-                    if (!selectedModels.includes(a) && selectedModels.includes(b)) return 1;
-                    return 0;
+                    const isASelected = selectedModels.includes(a);
+                    const isBSelected = selectedModels.includes(b);
+
+                    if (isASelected && !isBSelected) return -1; // Selected first
+                    if (!isASelected && isBSelected) return 1;  // Unselected later
+                    if (!isASelected && !isBSelected) {
+                        // Sort alphabetically for unselected models
+                        return a.localeCompare(b);
+                    }
+                    return 0; // If both are selected, keep original order
                 });
 
                 // Create options

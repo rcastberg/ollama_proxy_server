@@ -12,6 +12,8 @@ window.onload = function() {
         <li><a href="/local/user_info.html">User info</a></li>
         <li><a href="/local/show_usage.html">Statistics</a></li>
         <li><a href="/local/view_stats.html">User Statistics</a></li>
+        <li><a href="/local/model_speed.html">Model Speed</a></li>
+        <li><a href="/local/model_stats.html">Model statistics</a></li>
         <li><a href="/local/test_llm.html">Test LLM UI</a></li>
       </ul>
       <!-- Logout link at the bottom -->
