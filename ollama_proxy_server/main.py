@@ -654,6 +654,7 @@ def main_loop():
             # Remove 'Authorization' header
             backend_headers.pop("Authorization", None)
             backend_headers.pop("Host", None)
+            backend_headers.pop("Origin", None)
 
             # Log the incoming request
             logger.debug("Incoming request from %s:%s", client_ip, str(client_port))
@@ -879,7 +880,7 @@ def main_loop():
                         self.send_simple_response('\n'.join(file_contents).encode('utf-8'), 200, "text/csv")
                         return
                 elif (stripped_path in ["/local/json_stats"]):
-                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', header=0, names=CSV_HEADER)
+                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', names=CSV_HEADER)
                     # Filter to hour level and remove data with no tokens or valid users.
                     data['date'] = pd.to_datetime(data['time_stamp'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
                     data = data[((data["input_tokens"] > 0) | (data["input_tokens"] > 0))]  # & (data['user_name'].isin(self.authorized_users.keys()))]
@@ -892,7 +893,7 @@ def main_loop():
                     self.send_simple_response(str(data.to_json(date_format="iso")).encode("utf-8"), 200)
                     return
                 elif (stripped_path in ["/local/model_stats"]):
-                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', header=0, names=CSV_HEADER)
+                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', names=CSV_HEADER)
                     # Filter to hour level and remove data with no tokens or valid users.
                     data.index = pd.to_datetime(data['time_stamp'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
                     # Filter the data
