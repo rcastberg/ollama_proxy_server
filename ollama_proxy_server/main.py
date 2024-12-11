@@ -20,7 +20,7 @@ import pandas as pd
 import requests
 
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
