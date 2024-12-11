@@ -80,6 +80,20 @@ def get_config(filename, config_string=None, default_timeout=300):
     return servers
 
 
+def read_access_data(filename):
+    data = pd.read_csv(filename, encoding='utf-8', delimiter=',', names=CSV_HEADER)
+    if data.iloc[0, 0] == 'time_stamp':
+        data.drop(index=data.index[0], axis=0, inplace=True)
+    data['input_tokens'] = pd.to_numeric(data['input_tokens'], errors='coerce')
+    data['output_tokens'] = pd.to_numeric(data['output_tokens'], errors='coerce')
+    data['total_duration'] = pd.to_numeric(data['total_duration'], errors='coerce')
+    data['eval_duration'] = pd.to_numeric(data['eval_duration'], errors='coerce')
+    data['prompt_eval_duration'] = pd.to_numeric(data['prompt_eval_duration'], errors='coerce')
+    # Filter to hour level and remove data with no tokens or valid users.
+    data.index = pd.to_datetime(data['time_stamp'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
+    return data
+
+
 def write_config(filename, servers):
     config = configparser.ConfigParser()
     for name, server in servers:
@@ -885,11 +899,9 @@ def main_loop():
                         self.send_simple_response('\n'.join(file_contents).encode('utf-8'), 200, "text/csv")
                         return
                 elif (stripped_path in ["/local/json_stats"]):
-                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', names=CSV_HEADER)
-                    # Filter to hour level and remove data with no tokens or valid users.
-                    data['date'] = pd.to_datetime(data['time_stamp'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
+                    data = read_access_data(self.log_path)
                     data = data[((data["input_tokens"] > 0) | (data["input_tokens"] > 0))]  # & (data['user_name'].isin(self.authorized_users.keys()))]
-                    data = data.groupby('user_name').resample('1h', on='date').sum()[['input_tokens', 'output_tokens']].reset_index().rename(columns={'date': 'time_stamp'})
+                    data = data.groupby('user_name').resample('1h').sum()[['input_tokens', 'output_tokens']].reset_index().rename(columns={'date': 'time_stamp'})
                     # Remove data with no tokens
                     data = data[(data['input_tokens'] != 0) & (data['output_tokens'] != 0)]
                     # For non admin users anonmize the data for other users.
@@ -898,9 +910,7 @@ def main_loop():
                     self.send_simple_response(str(data.to_json(date_format="iso")).encode("utf-8"), 200)
                     return
                 elif (stripped_path in ["/local/model_stats"]):
-                    data = pd.read_csv(self.log_path, encoding='utf-8', delimiter=',', names=CSV_HEADER)
-                    # Filter to hour level and remove data with no tokens or valid users.
-                    data.index = pd.to_datetime(data['time_stamp'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
+                    data = read_access_data(self.log_path)
                     # Filter the data
                     data = data[((data["input_tokens"] > 0) | (data["input_tokens"] > 0))].copy()
 
