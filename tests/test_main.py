@@ -2,16 +2,18 @@ import inspect
 import json
 import logging
 import os
-import signal
-import subprocess
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import requests
 from dotenv import load_dotenv
+
+from ollama_proxy_server.main import main_loop
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -24,20 +26,24 @@ OLLMA_MODEL = os.getenv("OLLAMA_TEST_MODEL")
 PROXY_SERVER = os.getenv("PROXY_SERVER")
 PROXY_API_KEY = os.getenv("PROXY_API_KEY")
 PROXY_PORT = os.getenv("OP_PORT")
-AUTH_USER = ':'.join(os.getenv("OP_AUTHORIZED_USERS").split(';')[0:2])
+ENV_USERS = os.getenv("OP_AUTHORIZED_USERS").split('|')
+AUTH_USER = ':'.join(ENV_USERS[0].split(';')[0:2])
+AUTH_USER2 = ':'.join(ENV_USERS[1].split(';')[0:2])
 
 
 def isdebugging():
     for frame in inspect.stack():
-        if frame[1].endswith("pydevd.py"):
+        if frame[1].endswith("pydevd.py") or 'debugpy' in frame[1]:
             return True
     return False
 
 
 if isdebugging():
-    TIMEOUT = 300
+    TIMEOUT = 3600
 else:
     TIMEOUT = 30
+
+server_lock = threading.Lock()
 
 
 class CheckOllamaRunning(unittest.TestCase):
@@ -63,44 +69,37 @@ class CheckOllamaRunning(unittest.TestCase):
 class TestRestAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Make sure Ollama is running:
-        url = f"{OLLAMA_SERVER}/"
-        response = requests.get(url, timeout=TIMEOUT)
-        if response.status_code != 200:
-            raise Exception("Ollama Server is not running")
-        logger.debug("Ollama Server is running")
-        # Start the backend server
-        logger.debug("Starting Proxy Server")
-        # NEW COMMAND: python -m coverage run -m sample.program
-        command = [sys.executable, '-m', 'coverage', 'run', '-m', 'ollama_proxy_server']
+        server_lock.acquire()
 
-        cls.backend_process = subprocess.Popen(command,                 # python -m coverage run -m sample.program
-                                               stdout=subprocess.PIPE,  # pipe to stdout
-                                               env=os.environ.copy()    # pass parent's environment
-                                               )
-        logger.debug("Waiting for Proxy Server to start")
-        # Wait for the server to start
-        for i in range(20):
-            time.sleep(2)
-            url = f"http://{PROXY_SERVER}"
-            try:
-                response = requests.get(url, timeout=TIMEOUT)
-            except requests.exceptions.ConnectionError:
-                continue
-            if response.status_code == 200:
-                logger.debug("Proxy Server is running")
-                return
-        logger.debug("Proxy server failed to start")
-        raise Exception("Unable to start Proxy Server after 40 seconds")
+        # Patching sys.argv to pass arguments to main function
+        patcher_argv = patch.object(sys, 'argv', ['main.py', '--retry_attempts', '1'])
+        patcher_argv.start()
+
+        # Add a small delay to ensure the port is released
+        time.sleep(2)
+
+        # Start the server in a separate thread
+        cls.server = main_loop(test_mode=True)
+
+        def run_server():
+            cls.server.serve_forever()
+
+        cls.server_thread = threading.Thread(target=run_server)
+        cls.server_thread.start()
+        logger.info("Test server started")
 
     @classmethod
     def tearDownClass(cls):
-        # Stop the backend server, allow it to finsish serving first.
-        time.sleep(10)
-        logger.debug("Stopping Proxy Server")
-        os.kill(cls.backend_process.pid, signal.SIGTERM)
-        cls.backend_process.wait()
-        logger.debug("Proxy Server Stopped")
+        time.sleep(2)
+
+        cls.server.shutdown()  # Stop the server gracefully
+        cls.server.server_close()
+        cls.server_thread.join()
+        if cls.server_thread.is_alive():
+            logger.error("Server thread is still running")
+        else:
+            logger.info("Server thread has stopped")
+        server_lock.release()
 
     @pytest.mark.dependency(depends=["CheckOllamaRunning::test_generate"])
     def test_01_ollama_tags(self):
@@ -123,6 +122,44 @@ class TestRestAPI(unittest.TestCase):
         models = [model['name'] for model in models]
         # Needed for other tests.
         self.assertIn("tinyllama:latest", models, "Tinyllama not detected, Needed for other tests")
+
+    @pytest.mark.dependency(depends=["CheckOllamaRunning::test_generate"])
+    def test_01_ollama_full_tags(self):
+        url = f"http://{PROXY_SERVER}/api/full_tags"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        response = requests.get(url, headers=headers, timeout=TIMEOUT)
+
+        # Check if the request was successful
+        self.assertEqual(response.status_code, 200)
+
+        # Check if the response contains the expected data structure
+        # Adjust the expected structure based on your actual response
+        self.assertIn('DefaultServer', response.json())
+        self.assertIn('tinyllama:latest', response.json()['DefaultServer'])
+
+    @pytest.mark.dependency(depends=["CheckOllamaRunning::test_generate"])
+    def test_01_ollama_no_pull(self):
+        # The model should now be loaded, test if we can get to it.
+        # Might fail if ollama is told to unload model after use.
+        url = f"http://{PROXY_SERVER}/api/pull"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        data = {
+            "name": "tinyllama:latest"
+        }
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+
+        # Check if the request was successful
+        self.assertEqual(response.status_code, 503)
+
+        # Check if the response contains the expected data structure
+        # Adjust the expected structure based on your actual response
+        self.assertEqual(b'Unsupported in proxy', response.content)
 
     @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
     def test_02_generate_ollama_generate(self):
@@ -149,6 +186,26 @@ class TestRestAPI(unittest.TestCase):
         self.assertIn("response", response.json())
         self.assertIsInstance(response.json()["response"], str)
         self.assertGreater(len(response.json()["response"]), 10)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_02_generate_ollama_generate"])
+    def test_01_ollama_ps(self):
+        # The model should now be loaded, test if we can get to it.
+        # Might fail if ollama is told to unload model after use.
+        url = f"http://{PROXY_SERVER}/api/ps"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        response = requests.get(url, headers=headers, timeout=TIMEOUT)
+
+        # Check if the request was successful
+        self.assertEqual(response.status_code, 200)
+
+        # Check if the response contains the expected data structure
+        # Adjust the expected structure based on your actual response
+        self.assertIn('DefaultServer', response.json())
+        models = [model['name'] for model in response.json()['DefaultServer']]
+        self.assertIn('tinyllama:latest', models)
 
     @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
     def test_02_generate_ollama_generate_default_steam(self):
@@ -377,6 +434,219 @@ class TestRestAPI(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_missing_authorization_header(self):
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {"Content-Type": "application/json"}  # Missing Authorization
+        data = {"model": "tinyllama:latest", "prompt": "Test prompt"}
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 403)
+        self.assertIn(b"No or Invalid authentication token provided", response.content)
 
-if __name__ == "__main__":
-    unittest.main(failfast=False)
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_invalid_model_request(self):
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        data = {"model": "non_existent_model", "prompt": "Test prompt"}
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn(b"No servers support the requested model.", response.content)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_disallowed_model_request(self):
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER2}",
+            "Content-Type": "application/json",
+        }
+        data = {"model": "tinyllama:latest", "prompt": "Test prompt"}
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 403)
+        self.assertIn(b"User is not authorized to use the requested model", response.content)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_empty_payload(self):
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        response = requests.post(url, data="", headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"Missing 'model' in request", response.content)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_large_payload(self):
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        large_prompt = "Why?" * 10000  # Very large prompt
+        data = {"model": "tinyllama:latest", "prompt": large_prompt}
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 200)  # Or appropriate response for large payloads
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_unauthorized_user(self):
+        unauthorized_user = "fake_user:fake_key"
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Authorization": f"Bearer {unauthorized_user}",
+            "Content-Type": "application/json",
+        }
+        data = {"model": "tinyllama:latest", "prompt": "Test prompt"}
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 403)
+        self.assertIn(b'No or Invalid authentication token provided', response.content)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_cookie_user(self):
+        cookie = f"auth_token={AUTH_USER}"
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Content-Type": "application/json",
+            "Cookie": cookie
+        }
+        data = {"model": "tinyllama:latest", "prompt": "Test prompt"}
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 200)
+
+    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
+    def test_user_login(self):
+        cookie = f"auth_token={AUTH_USER}"
+        url = f"http://{PROXY_SERVER}/local/login"
+        headers = {
+            "Content-Type": "application/json",
+            "Cookie": cookie
+        }
+
+        response = requests.get(url, headers=headers, timeout=TIMEOUT, allow_redirects=False)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/local/view_stats.html", response.headers['Location'])
+
+        url = f"http://{PROXY_SERVER}/local/view_stats.html"
+        response = requests.get(url, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 200)
+        # Check when no header is present:
+        headers = {
+            "Content-Type": "application/json",
+        }
+        response = requests.get(url, headers=headers, timeout=5)
+        self.assertIn(b"<title>Login</title>", response.content)
+
+
+class TestRestAPI2(unittest.TestCase):
+    """
+    Do tests on the REST API, mocking the reuqests to the backend server
+    We need to pass argv to the main function to run in test mode
+    Otherwise it will fail with unknown arguments.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        server_lock.acquire()
+        patcher = patch('requests.request', side_effect=requests.exceptions.ConnectionError)
+        cls.mock_post = patcher.start()
+
+        # Patching sys.argv to pass arguments to main function
+        patcher_argv = patch.object(sys, 'argv', ['main.py', '--retry_attempts', '1'])
+        patcher_argv.start()
+
+        # Add a small delay to ensure the port is released
+        time.sleep(2)
+
+        # Start the server in a separate thread
+        cls.server = main_loop(test_mode=True)
+
+        def run_server():
+            cls.server.serve_forever()
+
+        cls.server_thread = threading.Thread(target=run_server)
+        cls.server_thread.start()
+        logger.info("Test server started")
+
+    @classmethod
+    def tearDownClass(cls):
+        time.sleep(2)
+
+        cls.server.shutdown()  # Stop the server gracefully
+        cls.server.server_close()
+        cls.server_thread.join()
+        if cls.server_thread.is_alive():
+            logger.error("Server thread is still running")
+        else:
+            logger.info("Server thread has stopped")
+        server_lock.release()
+
+    @pytest.mark.dependency(depends=["CheckOllamaRunning::test_generate"])
+    def test_server_unavailable(self):
+        # Test case logic
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        data = {"model": "tinyllama:latest", "prompt": "Test prompt"}
+        response = requests.post(url, json=data, headers=headers, timeout=30)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn(b'No available servers could handle the request.', response.content)
+
+
+class TestRestAPI3(unittest.TestCase):
+    """
+    Do tests on the REST API, mocking the reuqests to the backend server
+    We need to pass argv to the main function to run in test mode
+    Otherwise it will fail with unknown arguments.
+    """
+    @classmethod
+    def setUpClass(cls):
+        server_lock.acquire()
+        patcher = patch('requests.request', side_effect=requests.exceptions.Timeout)
+        cls.mock_post = patcher.start()
+
+        # Patching sys.argv to pass arguments to main function
+        patcher_argv = patch.object(sys, 'argv', ['main.py', '--retry_attempts', '1'])
+        patcher_argv.start()
+
+        # Add a small delay to ensure the port is released
+        time.sleep(2)
+
+        # Start the server in a separate thread
+        cls.server = main_loop(test_mode=True)
+
+        def run_server():
+            cls.server.serve_forever()
+
+        cls.server_thread = threading.Thread(target=run_server)
+        cls.server_thread.start()
+        logger.info("Test server started")
+
+    @classmethod
+    def tearDownClass(cls):
+        time.sleep(2)
+
+        cls.server.shutdown()  # Stop the server gracefully
+        cls.server.server_close()
+        cls.server_thread.join()
+        if cls.server_thread.is_alive():
+            logger.error("Server thread is still running")
+        else:
+            logger.info("Server thread has stopped")
+        server_lock.release()
+
+    @pytest.mark.dependency(depends=["TestRestAPI2::test_server_unavailable"])
+    def test_exhausted_retries(self):
+        url = f"http://{PROXY_SERVER}/api/generate"
+        headers = {
+            "Authorization": f"Bearer {AUTH_USER}",
+            "Content-Type": "application/json",
+        }
+        data = {"model": "tinyllama:latest", "prompt": "Test prompt", "stream": False}
+        response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn(response.content, [b"Failed to forward request", b'No available servers could handle the request.'])
