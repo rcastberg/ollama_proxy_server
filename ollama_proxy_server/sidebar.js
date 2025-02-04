@@ -46,11 +46,11 @@ window.onload = function() {
         color: white;
         text-decoration: none;
         font-size: 18px;
+        display: block;
+        padding: 10px;
       }
       #sidebar ul li a:hover {
         background-color: #575757;
-        display: block;
-        padding: 10px;
       }
       /* Wrapper to hold both sidebar and content */
       #wrapper {

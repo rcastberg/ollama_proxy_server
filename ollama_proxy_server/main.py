@@ -365,8 +365,8 @@ def get_available_models(class_object, path, get_params, post_data_dict, backend
             current_model = server_tags[available_servers[0][0]][model]
             current_model["servers"] = [server[0] for server in available_servers]
             model_info.append(current_model)
-        except IndexError:
-            logger.warning("Model %s not found in any server", model)
+        except (IndexError, KeyError) as e:
+            logger.warning("Model %s not found in any server, %s", model, e)
 
     if "v1/models" in path:
         model_info = {"object": "list", "data": model_info}

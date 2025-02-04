@@ -25,6 +25,9 @@ async function loadModels() {
         const data = await response.json();
         const models = data.models;
 
+        // Sort models alphabetically by name
+        models.sort((a, b) => a.name.localeCompare(b.name));
+
         modelSelect.innerHTML = '<option value="" disabled selected>Select a model</option>';
         models.forEach(model => {
             const option = document.createElement('option');

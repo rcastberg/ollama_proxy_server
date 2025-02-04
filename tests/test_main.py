@@ -515,7 +515,6 @@ class TestRestAPI(unittest.TestCase):
         response = requests.post(url, json=data, headers=headers, timeout=TIMEOUT)
         self.assertEqual(response.status_code, 200)
 
-    @pytest.mark.dependency(depends=["TestRestAPI::test_01_ollama_tags"])
     def test_user_login(self):
         cookie = f"auth_token={AUTH_USER}"
         url = f"http://{PROXY_SERVER}/local/login"
@@ -537,6 +536,21 @@ class TestRestAPI(unittest.TestCase):
         }
         response = requests.get(url, headers=headers, timeout=5)
         self.assertIn(b"<title>Login</title>", response.content)
+
+    def test_localpages(self):
+        cookie = f"auth_token={AUTH_USER}"
+        headers = {
+            "Content-Type": "application/json",
+            "Cookie": cookie
+        }
+
+        url = f"http://{PROXY_SERVER}/local/user_info.html"
+        response = requests.get(url, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 200)
+
+        url = f"http://{PROXY_SERVER}/local/no_valid.html"
+        response = requests.get(url, headers=headers, timeout=TIMEOUT)
+        self.assertEqual(response.status_code, 404)
 
 
 class TestRestAPI2(unittest.TestCase):
